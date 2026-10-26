@@ -1,0 +1,25 @@
+{
+  "name": "seed-monorepo",
+  "version": "1.0.0",
+  "description": "MERN + Flutter Monorepo — Web, Mobile, Backend, Shared",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "backend",
+    "web"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=backend",
+    "dev:web": "npm run dev --workspace=web",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:web\"",
+    "build:web": "npm run build --workspace=web",
+    "install:all": "npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}

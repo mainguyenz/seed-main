@@ -1,0 +1,96 @@
+# Dependencies
+node_modules/
+
+# Local model/cache artifacts
+yolov8n-seg.pt
+backend/python/.ultralytics/
+backend/model/*_saved_model/
+backend/model/*.pt
+backend/model/*.onnx
+*.tflite
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pnp
+.pnp.js
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime
+.DS_Store
+Thumbs.db
+synthetic_seeds.png
+*.pid
+*.seed
+*.pid.lock
+backend/storage/
+
+# IDE
+.vscode/settings.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Flutter
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/build/
+mobile/android/.gradle
+mobile/android/local.properties
+mobile/android/key.properties
+mobile/ios/.symlinks
+mobile/ios/Flutter/Flutter.framework
+mobile/ios/Flutter/Flutter.podspec
+mobile/ios/Pods/
+mobile/.pub-cache/
+
+# Coverage
+coverage/
+
+# APK/AAB binaries and generated store graphics (build locally, don't commit)
+*.apk
+*.aab
+/SeedVision-feature-graphic*
+/SeedVision-play-icon-512.png
+
+# Root large models and temporary outputs
+artifacts/
+/*.pt
+/*.onnx
+/test_outputs/
+
+# Mobile offline runtime intentionally ships only these production ONNX models.
+mobile/assets/models/*.onnx
+!mobile/assets/models/best_1024_int8_static.onnx
+!mobile/assets/models/best_mobile_yolo26_640.onnx
+
+# Keep old/export experiment models local.
+backend/model/previous_model/
+mobile/assets/models/best_1024_yolo26.onnx
+mobile/assets/models/best_mobile_stable.onnx
+
+# Azure/server builds require the same production model in source artifacts.
+!backend/model/main_model/best.onnx

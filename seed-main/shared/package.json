@@ -1,0 +1,11 @@
+{
+  "name": "@seed/shared",
+  "version": "1.0.0",
+  "description": "Shared constants and validators",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {},
+  "dependencies": {
+    "zod": "^3.22.4"
+  }
+}

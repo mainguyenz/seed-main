@@ -1,0 +1,63 @@
+# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
+# More GitHub Actions for Azure: https://github.com/Azure/actions
+
+name: Build and deploy container app to Azure Web App - seed-vanb2207577
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read #This is required for actions/checkout
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to container registry
+        uses: docker/login-action@v4
+        with:
+          registry: seedregistryvanb.azurecr.io/
+          username: ${{ secrets.AZUREAPPSERVICE_CONTAINERUSERNAME_BE81FAED53C84A3E8C05D8E92AB8ACCD }}
+          password: ${{ secrets.AZUREAPPSERVICE_CONTAINERPASSWORD_48E5BE362F3D41C89499FE95E7E51BAF }}
+
+      - name: Build and push container image to registry
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: seedregistryvanb.azurecr.io/${{ secrets.AZUREAPPSERVICE_CONTAINERUSERNAME_BE81FAED53C84A3E8C05D8E92AB8ACCD }}/seed-fullapp:${{ github.sha }}
+          file: ./Dockerfile
+
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write #This is required for requesting the JWT
+      contents: read #This is required for actions/checkout
+
+    needs: build
+
+    steps:
+
+      - name: Login to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_B10273DEAD5E475A9669A7E3F4C72BE0 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_3C703AF78D544A0A8A985DCA192184AD }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_E2213414A50E4AE982453A944044606C }}
+
+      - name: Deploy to Azure Web App
+        id: deploy-to-webapp
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: 'seed-vanb2207577'
+          slot-name: 'Production'
+          images: 'seedregistryvanb.azurecr.io/${{ secrets.AZUREAPPSERVICE_CONTAINERUSERNAME_BE81FAED53C84A3E8C05D8E92AB8ACCD }}/seed-fullapp:${{ github.sha }}'
+
