@@ -17,6 +17,7 @@ const handleApiProxyError = (_err, _req, res) => {
 };
 
 export default defineConfig({
+  base: './',
   plugins: [react()],
   resolve: {
     alias: {
