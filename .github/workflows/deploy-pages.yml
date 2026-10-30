@@ -34,16 +34,23 @@ jobs:
       - name: Build Web
         run: npm run build --workspace=web
 
+      - name: Prepare Pages static files
+        run: |
+          touch web/dist/.nojekyll
+          cp web/dist/index.html web/dist/404.html
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: web/dist
 
   deploy:
-    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    needs: build
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-

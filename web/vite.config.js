@@ -17,7 +17,7 @@ const handleApiProxyError = (_err, _req, res) => {
 };
 
 export default defineConfig({
-  base: './',
+  base: '/seed-main/',
   plugins: [react()],
   resolve: {
     alias: {
