@@ -41,18 +41,37 @@ def run(label, params):
     print(f"  mean_solidity: {mean_solidity(r):.4f}  (higher = less boxy)")
     print(f"  mean_extent  : {mean_extent(r):.4f}   (lower = less boxy)")
     print(f"  time         : {dt:.1f}s")
+    shadow_info = r.get("features", {}).get("shadowRemoval", {})
+    if shadow_info.get("enabled"):
+        print(f"  shadow_removal: applied={shadow_info.get('applied')}, shadow_pct={shadow_info.get('shadow_pct')}%")
     return r, dt
 
 
+# ── Bước hỏi người dùng về bóng ảnh ─────────────────────────────────────────
+try:
+    user_choice = input("Ảnh của bạn có bóng không? (yes/no hoặc có/không) [mặc định: không]: ").strip().lower()
+    enable_shadow = user_choice in ["y", "yes", "có", "co", "1", "true"]
+except (EOFError, KeyboardInterrupt):
+    enable_shadow = False
+
+if enable_shadow:
+    print("-> Bạn đã chọn [CÓ / YES]: Chạy luồng nhận diện và xóa bóng...")
+else:
+    print("-> Bạn đã chọn [KHÔNG / NO]: Bỏ qua luồng xóa bóng...")
+
 # 1. Baseline: YOLO ONNX only
-r_base, _ = run("YOLO ONNX only (baseline)", {
+r_base, _ = run("YOLO ONNX only", {
+    "enableShadowRemoval": enable_shadow,
     "enableGrabCut":     False,
     "enableEdgeSnap":    False,
     "maskContourSmooth": 0,
     "enableTiledInference": True,
 })
-save_img(r_base, "overlay_png_base64",  "01_yolo_only_overlay.png")
-save_img(r_base, "sam_mask_png_base64", "01_yolo_only_mask.png")
+save_img(r_base, "overlay_png_base64",        "01_yolo_only_overlay.png")
+save_img(r_base, "mask_png_base64",           "01_yolo_only_mask.png")
+if enable_shadow:
+    save_img(r_base, "shadow_removed_png_base64", "01_shadow_removed.png")
+    save_img(r_base, "shadow_mask_png_base64",    "01_shadow_mask.png")
 
 # 2. GrabCut + EdgeSnap
 r_cpu, _ = run("YOLO ONNX + GrabCut + EdgeSnap", {

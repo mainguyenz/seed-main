@@ -89,6 +89,13 @@
     "denoiseStrength":        { "type": "number",  "default": 0.1,    "min": 0,    "max": 1 },
     "denoiseDiameter":        { "type": "number",  "default": 5,      "min": 3,    "max": 15 },
 
+    "enableShadowRemoval":    { "type": "boolean", "default": false },
+    "shadowBlurKsize":        { "type": "number",  "default": 5,      "min": 3,    "max": 31 },
+    "shadowMorphKsize":       { "type": "number",  "default": 5,      "min": 3,    "max": 31 },
+    "shadowRemovalBlurKsize": { "type": "number",  "default": 61,     "min": 3,    "max": 201 },
+    "shadowMaxGain":          { "type": "number",  "default": 3.0,    "min": 1.0,  "max": 10.0 },
+    "shadowFeather":          { "type": "number",  "default": 9,      "min": 0,    "max": 50 },
+
     "minArea":                { "type": "number",  "default": 20,     "min": 1,    "max": 1000000 },
     "maxArea":                { "type": "number",  "default": 200000, "min": 1,    "max": 100000000 },
     "maxSegmentAspectRatio":  { "type": "number",  "default": 14,     "min": 1,    "max": 200 },

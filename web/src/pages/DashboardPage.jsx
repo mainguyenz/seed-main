@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { Box, Grid, Stack, Typography } from '@mui/material';
+import {
+  Box,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  Grid,
+  Stack,
+  Typography,
+} from '@mui/material';
 
 import { api, ensureFreshAccessToken, publicApi } from '@/api/axios.js';
 import { useAuthStore } from '@/store/auth.store.js';
@@ -41,6 +52,8 @@ export default function DashboardPage() {
   const [qcEditMode, setQcEditMode] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressPhase, setProgressPhase] = useState('');
+  const [enableShadowRemoval, setEnableShadowRemoval] = useState(false);
+  const [showShadowDialog, setShowShadowDialog] = useState(false);
   const progressTimerRef = useRef(null);
   const qcRenderSeqRef = useRef(0);
 
@@ -89,6 +102,7 @@ export default function DashboardPage() {
     const reader = new FileReader();
     reader.onload = () => {
       setPreviewUrl(typeof reader.result === 'string' ? reader.result : '');
+      setShowShadowDialog(true);
     };
     reader.onerror = () => {
       setPreviewUrl('');
@@ -207,6 +221,7 @@ export default function DashboardPage() {
 
       const formData = new FormData();
       formData.append('image', file);
+      formData.append('enableShadowRemoval', enableShadowRemoval);
 
       setProgress(50);
       setProgressPhase(text('Tiền xử lý và nhận dạng hạt', 'Preprocessing and detecting grains'));
@@ -347,7 +362,8 @@ export default function DashboardPage() {
     overlay: result?.overlay_png_base64,
     mask: result?.mask_png_base64,
     labels: result?.labels_png_base64,
-    preprocessed: result?.preprocessed_png_base64 || result?.original_png_base64,
+    shadow_removed: result?.shadow_removed_png_base64,
+    preprocessed: result?.shadow_removed_png_base64 || result?.preprocessed_png_base64 || result?.original_png_base64,
   };
   const activePreview = previewImages[previewMode] || result?.overlay_png_base64;
   const displayImage = activePreview
@@ -479,6 +495,8 @@ export default function DashboardPage() {
             onToggleQcEditMode={() => setQcEditMode((value) => !value)}
             onConfirmSuspect={handleConfirmSuspect}
             onDeleteSuspect={handleDeleteSuspect}
+            enableShadowRemoval={enableShadowRemoval}
+            onToggleShadowRemoval={() => setEnableShadowRemoval((value) => !value)}
           />
         </Grid>
 
@@ -493,6 +511,49 @@ export default function DashboardPage() {
           />
         </Grid>
       </Grid>
+
+      {/* Dialog xác nhận có bóng ảnh hay không */}
+      <Dialog
+        open={showShadowDialog}
+        onClose={() => setShowShadowDialog(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle sx={{ fontWeight: 600 }}>
+          {text('Kiểm tra bóng ảnh', 'Check Image Shadow')}
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            {text(
+              'Ảnh của bạn có bóng không? Nếu chọn Có (Yes), hệ thống sẽ kích hoạt luồng tự động tách và xóa bóng để tối ưu nhận dạng hạt.',
+              'Does your image contain shadows? If you choose Yes, the system will run the shadow removal pipeline to improve detection accuracy.'
+            )}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button
+            variant="outlined"
+            color="inherit"
+            onClick={() => {
+              setEnableShadowRemoval(false);
+              setShowShadowDialog(false);
+            }}
+          >
+            {text('Không (No)', 'No')}
+          </Button>
+          <Button
+            variant="contained"
+            color="primary"
+            autoFocus
+            onClick={() => {
+              setEnableShadowRemoval(true);
+              setShowShadowDialog(false);
+            }}
+          >
+            {text('Có (Yes)', 'Yes')}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

@@ -169,6 +169,8 @@ export const DashboardPreviewPanel = ({
   onToggleQcEditMode,
   onConfirmSuspect,
   onDeleteSuspect,
+  enableShadowRemoval = false,
+  onToggleShadowRemoval,
 }) => {
   const { text } = useLanguage();
   const [guideOpen, setGuideOpen] = useState(false);
@@ -333,6 +335,15 @@ export const DashboardPreviewPanel = ({
                     {label}
                   </Button>
                 ))}
+                {result?.shadow_removed_png_base64 && (
+                  <Button
+                    size="small"
+                    variant={previewMode === "shadow_removed" ? "contained" : "outlined"}
+                    onClick={() => onPreviewModeChange("shadow_removed")}
+                  >
+                    {text("Ảnh xóa bóng", "No Shadow")}
+                  </Button>
+                )}
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   <Button
                     size="small"
@@ -831,6 +842,19 @@ export const DashboardPreviewPanel = ({
                   ? "Chạy lại"
                   : "Chạy xử lý"}
             </Button>
+            {Boolean(fileName || cameraActive) && (
+              <Chip
+                label={
+                  enableShadowRemoval
+                    ? text("Xóa bóng: BẬT", "Shadow removal: ON")
+                    : text("Xóa bóng: TẮT", "Shadow removal: OFF")
+                }
+                color={enableShadowRemoval ? "primary" : "default"}
+                variant={enableShadowRemoval ? "filled" : "outlined"}
+                onClick={onToggleShadowRemoval}
+                sx={{ fontWeight: 600, cursor: "pointer", alignSelf: { xs: "flex-start", sm: "center" } }}
+              />
+            )}
           </Stack>
 
           {processing && (

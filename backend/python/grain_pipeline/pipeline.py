@@ -12,6 +12,7 @@ from .measure import calibration_factor, filter_and_measure, is_seed_instance, m
 from .preprocess import apply_light_preprocessing
 from .reference_marker import recover_reference_marker, reference_suggestion
 from .render import label_map_rgb, label_rgb, mask_rgb, overlay_rgb
+from .shadow_removal import detect_and_remove_shadow
 from .yolo_segment import predict_instances
 
 
@@ -19,7 +20,22 @@ def analyze_image(image_path: Path, params: dict) -> dict:
     # ── Stage 0: load & preprocess ──────────────────────────────────────────
     max_side = int_param(params, "maxSide")
     prepared = read_image(image_path, max_side)
-    segment_input = apply_light_preprocessing(prepared.rgb, params)
+
+    shadow_stats = {
+        "enabled": bool_param(params, "enableShadowRemoval"),
+        "applied": False,
+        "shadow_pct": 0.0,
+        "grain_pct": 0.0,
+    }
+    shadow_removed_rgb = None
+    shadow_mask = None
+    if bool_param(params, "enableShadowRemoval"):
+        segment_input, shadow_mask, shadow_stats = detect_and_remove_shadow(prepared.rgb, params)
+        shadow_removed_rgb = segment_input.copy()
+    else:
+        segment_input = prepared.rgb
+
+    segment_input = apply_light_preprocessing(segment_input, params)
 
     # ── Stage 1: YOLO-seg ONNX inference ────────────────────────────────────
     yolo_instances = predict_instances(segment_input, params)
@@ -80,6 +96,7 @@ def analyze_image(image_path: Path, params: dict) -> dict:
                 "claheClipLimit":       float_param(params, "claheClipLimit"),
                 "denoiseStrength":      float_param(params, "denoiseStrength"),
             },
+            "shadowRemoval": shadow_stats,
         },
         "segmentation": {
             "pipeline":                "yolo_onnx",
@@ -188,6 +205,8 @@ def analyze_image(image_path: Path, params: dict) -> dict:
         "csv":                     measurements_csv(measurements),
         "original_png_base64":     original_png,
         "preprocessed_png_base64": preprocessed_png,
+        "shadow_removed_png_base64": png_base64(shadow_removed_rgb) if shadow_removed_rgb is not None else "",
+        "shadow_mask_png_base64":  png_base64(shadow_mask) if shadow_mask is not None else "",
         "overlay_png_base64":      png_base64(overlay),
         "sam_mask_png_base64":     "",
         "mask_png_base64":         png_base64(mask_image),
