@@ -33,6 +33,8 @@ jobs:
 
       - name: Build Web
         run: npm run build --workspace=web
+        env:
+          VITE_BASE: /seed-main/
 
       - name: Prepare Pages static files
         run: |

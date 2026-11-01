@@ -16,8 +16,8 @@ const handleApiProxyError = (_err, _req, res) => {
   }));
 };
 
-export default defineConfig(({ command }) => ({
-  base: command === 'build' ? '/seed-main/' : '/',
+export default defineConfig({
+  base: process.env.VITE_BASE || '/',
   plugins: [react()],
   resolve: {
     alias: {
@@ -37,4 +37,4 @@ export default defineConfig(({ command }) => ({
       '/socket.io': { target: 'http://localhost:3000', ws: true, changeOrigin: true },
     },
   },
-}));
+});

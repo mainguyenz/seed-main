@@ -55,7 +55,11 @@ def _onnx_session(weights: str):
             "Python dependency 'onnxruntime' is missing. "
             "Install backend/python/requirements.txt."
         ) from exc
-    sess = ort.InferenceSession(weights, providers=["CPUExecutionProvider"])
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = 2
+    opts.inter_op_num_threads = 1
+    opts.enable_cpu_mem_arena = False
+    sess = ort.InferenceSession(weights, sess_options=opts, providers=["CPUExecutionProvider"])
     return sess
 
 

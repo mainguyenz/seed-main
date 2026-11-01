@@ -92,6 +92,7 @@ app.use('/api/grain', grainRoutes);
 // Express serves it so the full app can run from one Azure Web App URL.
 if (env.isProd && fs.existsSync(path.join(webDistDir, 'index.html'))) {
   app.use(express.static(webDistDir));
+  app.use('/seed-main', express.static(webDistDir));
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/socket.io') || req.path === '/health') {
       next();
