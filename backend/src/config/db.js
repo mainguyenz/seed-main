@@ -8,11 +8,12 @@ export const connectDB = async () => {
       dns.setServers(env.DNS_SERVERS);
     }
 
-    const conn = await mongoose.connect(env.MONGODB_URI);
+    const conn = await mongoose.connect(env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 2500,
+    });
     console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
-    console.error('❌ MongoDB connection error:', error);
-    process.exit(1);
+    console.warn(`⚠️  MongoDB không khả dụng (${error.message}). Tiếp tục chạy ở chế độ Guest / Phân tích ngoại tuyến (Local-only).`);
   }
 };
 
