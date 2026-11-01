@@ -559,12 +559,22 @@ export default function DashboardPage() {
 }
 
 const resolveProcessError = (err, text) => {
+  console.error('Chi tiết lỗi nhận dạng ảnh:', err);
+
   if (err.response?.status === 401) {
     return text('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại rồi chạy xử lý.', 'Your session expired. Please log in again and run analysis.');
   }
 
   const message = err.response?.data?.message;
   if (message) return message;
+
+  if (err.response?.status === 404) {
+    return text(
+      'Không tìm thấy máy chủ AI (Lỗi 404). Trang web trên GitHub Pages là web tĩnh, không thể chạy mô hình AI. Bạn hãy mở trang web tại http://localhost:5173 trên máy tính đã bật Backend!',
+      'AI server not found (404). Static GitHub Pages cannot run AI by itself. Please open http://localhost:5173 on your machine with backend running!'
+    );
+  }
+
   if (err.code === 'ECONNABORTED') {
     return text('Xử lý quá lâu. Hãy thử ảnh nhỏ hơn, chụp gần hơn hoặc xử lý lại sau.', 'Analysis took too long. Try a smaller image, shoot closer, or run it again later.');
   }
@@ -572,7 +582,10 @@ const resolveProcessError = (err, text) => {
     return text('Hệ thống đang chưa sẵn sàng. Vui lòng thử lại sau.', 'The system is not ready yet. Please try again later.');
   }
   if (err.code === 'ERR_NETWORK') {
-    return text('Không kết nối được. Kiểm tra mạng rồi thử lại.', 'Could not connect. Check the network and try again.');
+    return text('Không kết nối được tới máy chủ. Vui lòng kiểm tra xem backend đã được khởi động chưa.', 'Could not connect to backend. Please check if the backend server is running.');
+  }
+  if (err.message) {
+    return err.message;
   }
   return text('Không xử lý được ảnh. Vui lòng thử lại với ảnh khác hoặc kiểm tra kết nối.', 'Could not analyze the image. Try another image or check the connection.');
 };
