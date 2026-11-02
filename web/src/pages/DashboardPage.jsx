@@ -52,9 +52,6 @@ export default function DashboardPage() {
   const [qcEditMode, setQcEditMode] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressPhase, setProgressPhase] = useState('');
-  const [shadowProcessed, setShadowProcessed] = useState(false);
-  const [originalFile, setOriginalFile] = useState(null);
-  const [originalUrl, setOriginalUrl] = useState('');
   const progressTimerRef = useRef(null);
   const qcRenderSeqRef = useRef(0);
 
@@ -96,17 +93,13 @@ export default function DashboardPage() {
     setPreviewUrl('');
     setImageFile(file);
     setFileName(file.name);
-    setOriginalFile(file);
     setCameraActive(false);
     setProcessError('');
-    setShadowProcessed(false);
     resetRunState();
 
     const reader = new FileReader();
     reader.onload = () => {
-      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
-      setPreviewUrl(dataUrl);
-      setOriginalUrl(dataUrl);
+      setPreviewUrl(typeof reader.result === 'string' ? reader.result : '');
     };
     reader.onerror = () => {
       setPreviewUrl('');
@@ -193,7 +186,7 @@ export default function DashboardPage() {
     });
   };
 
-  const handleProcess = async (overrideFile = null) => {
+  const handleProcess = async () => {
     setProcessing(true);
     setProcessError('');
     setProgress(5);
@@ -210,7 +203,7 @@ export default function DashboardPage() {
     };
 
     try {
-      const file = overrideFile || (await getImageForProcessing());
+      const file = await getImageForProcessing();
       if (!file) {
         setProcessError(text('Vui lòng import ảnh hoặc bật camera trước khi xử lý.', 'Please import an image or turn on the camera before analyzing.'));
         setProgress(0);
@@ -225,7 +218,6 @@ export default function DashboardPage() {
 
       const formData = new FormData();
       formData.append('image', file);
-      formData.append('enableShadowRemoval', overrideFile ? false : enableShadowRemoval);
 
       setProgress(50);
       setProgressPhase(text('Tiền xử lý và nhận dạng hạt', 'Preprocessing and detecting grains'));
@@ -299,86 +291,6 @@ export default function DashboardPage() {
     }
   };
 
-  const handleRemoveShadow = async () => {
-    setProcessError('');
-    const file = await getImageForProcessing();
-    if (!file) {
-      setProcessError(text('Vui lòng chọn ảnh trước khi khử bóng.', 'Please import an image first.'));
-      return;
-    }
-
-    setProcessing(true);
-    setProgress(20);
-    setProgressPhase(text('Đang khử bóng bằng thuật toán máy (HSV + Otsu)...', 'Removing shadow (HSV + Otsu)...'));
-
-    try {
-      const formData = new FormData();
-      formData.append('image', file);
-
-      const shadowApi = isGuest ? publicApi : api;
-      const shadowPath = isGuest ? '/grain/remove-shadow-public' : '/grain/remove-shadow';
-
-      const { data } = await shadowApi.post(shadowPath, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000,
-      });
-
-      setProgress(80);
-      setProgressPhase(text('Đang đưa ảnh sạch bóng vào khung xem...', 'Placing shadow-removed image into view...'));
-
-      const cleanB64 = data?.data?.shadow_removed_png_base64;
-      if (cleanB64) {
-        if (!originalFile) {
-          setOriginalFile(file);
-          setOriginalUrl(previewUrl);
-        }
-
-        const cleanDataUrl = `data:image/png;base64,${cleanB64}`;
-        setPreviewUrl(cleanDataUrl);
-
-        const byteCharacters = atob(cleanB64);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        const cleanBlob = new Blob([byteArray], { type: 'image/png' });
-        const cleanFile = new File([cleanBlob], `clean_${file.name || 'image.png'}`, { type: 'image/png' });
-        setImageFile(cleanFile);
-        setShadowProcessed(true);
-
-        const stats = data?.data?.stats;
-        const shadowPct = stats?.shadow_pct ?? 0;
-        setProgress(100);
-        setProgressPhase(text(
-          `Khử bóng xong (${shadowPct}%)! Ảnh sạch bóng đã cập nhật trong ô. Nhấn 'Chạy xử lý đo đếm' để bắt đầu.`,
-          `Shadow removed (${shadowPct}%)! Clean image ready in view. Click 'Run analysis' to start.`
-        ));
-      } else {
-        setProgress(100);
-        setProgressPhase(text('Không phát hiện vùng bóng đáng kể.', 'No significant shadow detected.'));
-      }
-    } catch (err) {
-      console.error('Lỗi khi khử bóng:', err);
-      setProcessError(resolveProcessError(err, text));
-    } finally {
-      setTimeout(() => {
-        setProcessing(false);
-        setProgress(0);
-        setProgressPhase('');
-      }, 2000);
-    }
-  };
-
-  const handleRestoreOriginal = () => {
-    if (originalFile && originalUrl) {
-      setImageFile(originalFile);
-      setPreviewUrl(originalUrl);
-      setShadowProcessed(false);
-      resetRunState();
-    }
-  };
-
   const persistEditedResult = async (nextResult) => {
     const runId = nextResult?.run?.id;
     if (!runId) return;
@@ -446,8 +358,7 @@ export default function DashboardPage() {
     overlay: result?.overlay_png_base64,
     mask: result?.mask_png_base64,
     labels: result?.labels_png_base64,
-    shadow_removed: result?.shadow_removed_png_base64,
-    preprocessed: result?.shadow_removed_png_base64 || result?.preprocessed_png_base64 || result?.original_png_base64,
+    preprocessed: result?.preprocessed_png_base64 || result?.original_png_base64,
   };
   const activePreview = previewImages[previewMode] || result?.overlay_png_base64;
   const displayImage = activePreview
@@ -579,9 +490,6 @@ export default function DashboardPage() {
             onToggleQcEditMode={() => setQcEditMode((value) => !value)}
             onConfirmSuspect={handleConfirmSuspect}
             onDeleteSuspect={handleDeleteSuspect}
-            shadowProcessed={shadowProcessed}
-            onRemoveShadow={handleRemoveShadow}
-            onRestoreOriginal={handleRestoreOriginal}
           />
         </Grid>
 

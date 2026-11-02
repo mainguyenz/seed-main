@@ -24,7 +24,6 @@ import {
   Check,
   CheckCircle,
   Cancel,
-  Brightness6,
 } from "@mui/icons-material";
 import { useLanguage } from "@/i18n.jsx";
 
@@ -170,9 +169,6 @@ export const DashboardPreviewPanel = ({
   onToggleQcEditMode,
   onConfirmSuspect,
   onDeleteSuspect,
-  shadowProcessed = false,
-  onRemoveShadow,
-  onRestoreOriginal,
 }) => {
   const { text } = useLanguage();
   const [guideOpen, setGuideOpen] = useState(false);
@@ -819,7 +815,7 @@ export const DashboardPreviewPanel = ({
             </Alert>
           )}
 
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1} flexWrap="wrap" useFlexGap>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
             <Button variant="contained" onClick={onCamera}>
               {cameraActive ? text("Tắt camera", "Stop camera") : text("Kết nối camera", "Connect camera")}
             </Button>
@@ -833,55 +829,18 @@ export const DashboardPreviewPanel = ({
                 onChange={onFile}
               />
             </Button>
-
-            {/* Nút KHỬ BÓNG ẢNH RIÊNG BIỆT */}
             <Button
-              variant={shadowProcessed ? "contained" : "outlined"}
-              color="warning"
-              disabled={processing || (!fileName && !cameraActive)}
-              onClick={onRemoveShadow}
-              startIcon={<Brightness6 />}
-            >
-              {shadowProcessed
-                ? text("Đã khử bóng", "Shadow removed")
-                : text("Khử bóng ảnh", "Remove shadow")}
-            </Button>
-
-            {shadowProcessed && (
-              <Button
-                variant="text"
-                size="small"
-                color="inherit"
-                disabled={processing}
-                onClick={onRestoreOriginal}
-              >
-                {text("Hoàn tác ảnh gốc", "Undo clean")}
-              </Button>
-            )}
-
-            {/* Nút CHẠY XỬ LÝ ĐO ĐẾM RIÊNG BIỆT */}
-            <Button
-              variant="contained"
-              color="primary"
+              variant="outlined"
               disabled={processing || (!fileName && !cameraActive)}
               onClick={onProcess}
             >
               {processing
                 ? text("Đang xử lý...", "Processing...")
                 : result
-                  ? text("Chạy lại đo đếm", "Re-run analysis")
-                  : text("Chạy xử lý đo đếm", "Run analysis")}
+                  ? text("Chạy lại", "Re-run")
+                  : text("Chạy xử lý", "Run analysis")}
             </Button>
           </Stack>
-
-          {shadowProcessed && (
-            <Alert severity="success" sx={{ mt: 1.5, py: 0.5 }}>
-              {text(
-                "Ảnh đã được khử bóng sạch sẽ và cập nhật vào khung xem! Bây giờ bạn có thể nhấn 'Chạy xử lý đo đếm' để tiến hành phân tích hạt.",
-                "Shadow removed successfully! Image updated in view. You can now click 'Run analysis' to measure grains."
-              )}
-            </Alert>
-          )}
 
           {processing && (
             <Box sx={{ width: "100%", mt: 2.5 }}>
