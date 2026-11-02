@@ -1,3 +1,4 @@
+import os from 'os';
 import { Router } from 'express';
 import multer from 'multer';
 
@@ -16,7 +17,7 @@ import { authenticate } from '../middleware/auth.middleware.js';
 const router = Router();
 
 const upload = multer({
-  storage: multer.memoryStorage(),
+  dest: os.tmpdir(),
   limits: {
     fileSize: 25 * 1024 * 1024,
   },

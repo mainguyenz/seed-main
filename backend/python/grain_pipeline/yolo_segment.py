@@ -204,6 +204,7 @@ def _decode_yolo_seg(
     boxes_xyxy = boxes_raw.T if boxes_are_xyxy else _cxcywh_to_xyxy(boxes_raw.T)
 
     # NMS
+    max_det = min(max_det, 1200)
     indices = _nms(boxes_xyxy, class_scores, class_ids, iou_thr, max_det)
     if len(indices) == 0:
         return []
@@ -218,6 +219,7 @@ def _decode_yolo_seg(
     proto_flat = protos.reshape(32, -1)                  # [32, mh*mw]
     mask_flat  = _sigmoid(coeffs.T @ proto_flat)         # [M, mh*mw]
     masks_proto = mask_flat.reshape(-1, proto_h, proto_w)  # [M, mh, mw]
+    del proto_flat, mask_flat
 
     pad_h, pad_w = padded_shape
     crop_h, crop_w = crop_shape

@@ -28,6 +28,7 @@ export const analyzeGrainImage = async (req, res) => {
 
     const params = normalizeGrainParams(req.body);
     const result = await analyzeGrainImageBuffer({
+      filePath: req.file.path,
       buffer: req.file.buffer,
       originalName: req.file.originalname,
       params,
@@ -85,6 +86,7 @@ export const analyzeGrainImagePublic = async (req, res) => {
 
     const params = normalizeGrainParams(req.body);
     const result = await analyzeGrainImageBuffer({
+      filePath: req.file.path,
       buffer: req.file.buffer,
       originalName: req.file.originalname,
       params,

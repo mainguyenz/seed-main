@@ -20,21 +20,25 @@ const requestOverrideFields = new Set([
   ...grainParamFields.string,
 ]);
 
-export const analyzeGrainImageBuffer = async ({ buffer, originalName, params }) => {
-  if (!buffer?.length) {
-    const error = new Error('Không có dữ liệu ảnh đầu vào');
-    error.statusCode = 400;
-    throw error;
-  }
-
-  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'seed-grain-'));
-  const extension = safeExtension(originalName);
-  const imagePath = path.join(tempDir, `input${extension}`);
+export const analyzeGrainImageBuffer = async ({ filePath, buffer, originalName, params }) => {
+  let targetPath = filePath;
+  let tempDir = null;
 
   try {
-    await fs.promises.writeFile(imagePath, buffer);
+    if (!targetPath) {
+      if (!buffer?.length) {
+        const error = new Error('Không có dữ liệu ảnh đầu vào');
+        error.statusCode = 400;
+        throw error;
+      }
+      tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'seed-grain-'));
+      const extension = safeExtension(originalName);
+      targetPath = path.join(tempDir, `input${extension}`);
+      await fs.promises.writeFile(targetPath, buffer);
+    }
+
     const normalized = normalizeGrainParams(params);
-    const payload = await runPythonWorker(imagePath, normalized);
+    const payload = await runPythonWorker(targetPath, normalized);
     if (!payload.ok) {
       const error = new Error(payload.error || 'Phân tích ảnh thất bại');
       error.statusCode = 422;
@@ -42,7 +46,11 @@ export const analyzeGrainImageBuffer = async ({ buffer, originalName, params }) 
     }
     return payload.data;
   } finally {
-    fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    if (tempDir) {
+      fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    } else if (filePath) {
+      fs.promises.unlink(filePath).catch(() => {});
+    }
   }
 };
 

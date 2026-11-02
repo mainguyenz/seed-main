@@ -64,7 +64,7 @@ def analyze_image(image_path: Path, params: dict) -> dict:
         else ""
     )
 
-    return {
+    ret = {
         "image": {
             "width":           int(segment_input.shape[1]),
             "height":          int(segment_input.shape[0]),
@@ -194,3 +194,8 @@ def analyze_image(image_path: Path, params: dict) -> dict:
         "labels_png_base64":       png_base64(labels_image),
         "label_map_png_base64":    png_base64(label_map),
     }
+
+    import gc
+    gc.collect()
+
+    return ret

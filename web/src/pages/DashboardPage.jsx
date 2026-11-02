@@ -24,6 +24,48 @@ import { saveGuestRun, updateGuestRunResult } from '@/utils/guestRuns.js';
 
 const emptyCalibration = { start: null, end: null, referenceMm: '' };
 const DETECTED_REFERENCE_MM = 23;
+const MAX_IMAGE_SIDE = 1600;
+
+const optimizeImageFile = (file) => new Promise((resolve) => {
+  if (!file || !file.type?.startsWith('image/')) {
+    resolve({ file, preview: null });
+    return;
+  }
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    const { naturalWidth: width, naturalHeight: height } = img;
+    const maxSide = Math.max(width, height);
+    if (maxSide <= MAX_IMAGE_SIDE) {
+      resolve({ file, preview: null });
+      return;
+    }
+    const scale = MAX_IMAGE_SIDE / maxSide;
+    const targetW = Math.round(width * scale);
+    const targetH = Math.round(height * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, targetW, targetH);
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        resolve({ file, preview: null });
+        return;
+      }
+      const safeName = file.name.replace(/\.[^.]+$/, '') + '.jpg';
+      const optimizedFile = new File([blob], safeName, { type: 'image/jpeg' });
+      const preview = canvas.toDataURL('image/jpeg', 0.9);
+      resolve({ file: optimizedFile, preview });
+    }, 'image/jpeg', 0.92);
+  };
+  img.onerror = () => {
+    URL.revokeObjectURL(url);
+    resolve({ file, preview: null });
+  };
+  img.src = url;
+});
 
 const suggestedReferencePoint = (suggestion, xKey, yKey) => {
   const x = Number(suggestion?.[xKey]);
@@ -86,26 +128,36 @@ export default function DashboardPage() {
     }
   };
 
-  const handleFile = (event) => {
+  const handleFile = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
     setPreviewUrl('');
-    setImageFile(file);
     setFileName(file.name);
     setCameraActive(false);
     setProcessError('');
     resetRunState();
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setPreviewUrl(typeof reader.result === 'string' ? reader.result : '');
-    };
-    reader.onerror = () => {
-      setPreviewUrl('');
-      setProcessError(text('Không thể đọc ảnh đã chọn. Vui lòng thử ảnh JPG hoặc PNG khác.', 'Could not read the selected image. Please try another JPG or PNG image.'));
-    };
-    reader.readAsDataURL(file);
+    try {
+      const { file: optimizedFile, preview } = await optimizeImageFile(file);
+      setImageFile(optimizedFile);
+      if (preview) {
+        setPreviewUrl(preview);
+      } else {
+        const reader = new FileReader();
+        reader.onload = () => {
+          setPreviewUrl(typeof reader.result === 'string' ? reader.result : '');
+        };
+        reader.readAsDataURL(file);
+      }
+    } catch {
+      setImageFile(file);
+      const reader = new FileReader();
+      reader.onload = () => {
+        setPreviewUrl(typeof reader.result === 'string' ? reader.result : '');
+      };
+      reader.readAsDataURL(file);
+    }
 
     event.target.value = '';
   };
@@ -168,21 +220,32 @@ export default function DashboardPage() {
   };
 
   const getImageForProcessing = async () => {
-    if (imageFile) return imageFile;
+    if (imageFile) {
+      const { file: optimized } = await optimizeImageFile(imageFile);
+      return optimized;
+    }
     if (!cameraActive || !videoRef.current?.videoWidth) return null;
 
     const video = videoRef.current;
+    let targetW = video.videoWidth;
+    let targetH = video.videoHeight;
+    const maxSide = Math.max(targetW, targetH);
+    if (maxSide > MAX_IMAGE_SIDE) {
+      const scale = MAX_IMAGE_SIDE / maxSide;
+      targetW = Math.round(targetW * scale);
+      targetH = Math.round(targetH * scale);
+    }
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = targetW;
+    canvas.height = targetH;
     const context = canvas.getContext('2d');
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    context.drawImage(video, 0, 0, targetW, targetH);
 
     return new Promise((resolve) => {
       canvas.toBlob((blob) => {
         if (!blob) resolve(null);
-        resolve(new File([blob], 'camera-frame.png', { type: 'image/png' }));
-      }, 'image/png');
+        resolve(new File([blob], 'camera-frame.jpg', { type: 'image/jpeg' }));
+      }, 'image/jpeg', 0.92);
     });
   };
 
@@ -527,6 +590,9 @@ const resolveProcessError = (err, text) => {
 
   if (err.code === 'ECONNABORTED') {
     return text('Xử lý quá lâu. Hãy thử ảnh nhỏ hơn, chụp gần hơn hoặc xử lý lại sau.', 'Analysis took too long. Try a smaller image, shoot closer, or run it again later.');
+  }
+  if (err.response?.status === 502) {
+    return text('Máy chủ đang quá tải hoặc gặp sự cố xử lý (502 Bad Gateway). Vui lòng thử lại với ảnh nhỏ hơn hoặc đợi giây lát.', 'Server gateway error (502). Please try again with a smaller image or wait a moment.');
   }
   if (err.response?.status === 503 || (err.response?.status === 500 && typeof err.response?.data === 'string')) {
     return text('Hệ thống đang chưa sẵn sàng. Vui lòng thử lại sau.', 'The system is not ready yet. Please try again later.');
