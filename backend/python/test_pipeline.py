@@ -1,8 +1,20 @@
-"""Quick benchmark: compare YOLO-only vs YOLO+GrabCut+EdgeSnap."""
+"""Quick benchmark: compare YOLO-only vs YOLO+GrabCut+EdgeSnap with optional Shadow Removal."""
 import base64
 import pathlib
 import sys
 import time
+
+# Ensure UTF-8 console output on Windows
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from grain_pipeline.pipeline import analyze_image
@@ -43,7 +55,7 @@ def run(label, params):
     print(f"  time         : {dt:.1f}s")
     shadow_info = r.get("features", {}).get("shadowRemoval", {})
     if shadow_info.get("enabled"):
-        print(f"  shadow_removal: applied={shadow_info.get('applied')}, shadow_pct={shadow_info.get('shadow_pct')}%")
+        print(f"  shadow_removal: applied={shadow_info.get('applied')}, shadow_pct={shadow_info.get('shadow_pct')}%, manual_edited={shadow_info.get('manual_edited')}")
     return r, dt
 
 
@@ -55,13 +67,17 @@ except (EOFError, KeyboardInterrupt):
     enable_shadow = False
 
 if enable_shadow:
-    print("-> Bạn đã chọn [CÓ / YES]: Chạy luồng nhận diện và xóa bóng...")
+    print("\n-> Bạn đã chọn [CÓ / YES]: Chạy luồng khử bóng (shadow_removal)...")
+    print("   [1] Máy tự động nhận diện vùng bóng bằng HSV + Otsu.")
+    print("   [2] Mở trình chỉnh sửa tay MaskEditor: Bạn có thể vẽ thêm hoặc xóa bớt bóng.")
+    print("   [3] Áp dụng thuật toán nâng sáng khử bóng, trả về ảnh sạch bóng để YOLO tiếp tục nhận diện!")
 else:
     print("-> Bạn đã chọn [KHÔNG / NO]: Bỏ qua luồng xóa bóng...")
 
 # 1. Baseline: YOLO ONNX only
 r_base, _ = run("YOLO ONNX only", {
     "enableShadowRemoval": enable_shadow,
+    "interactiveShadowRemoval": enable_shadow,
     "enableGrabCut":     False,
     "enableEdgeSnap":    False,
     "maskContourSmooth": 0,
@@ -75,6 +91,8 @@ if enable_shadow:
 
 # 2. GrabCut + EdgeSnap
 r_cpu, _ = run("YOLO ONNX + GrabCut + EdgeSnap", {
+    "enableShadowRemoval": enable_shadow,
+    "interactiveShadowRemoval": False,  # đã có ảnh sạch bóng từ bước trước, không cần mở lại GUI
     "enableGrabCut":     True,
     "enableEdgeSnap":    True,
     "maskContourSmooth": 1.0,

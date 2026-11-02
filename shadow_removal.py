@@ -1,243 +1,249 @@
-import cv2
+"""Khử bóng cho ảnh hạt lúa (Shadow Removal Module).
+
+Tích hợp 2 cơ chế:
+1. Khử bóng bằng máy (tự động): Phát hiện dải màu hạt lúa (HSV) + Phân ngưỡng vùng tối (Otsu) -> Mặt nạ bóng tự động.
+2. Khử bóng bằng tay (thủ công): Giao diện MaskEditor cho phép người dùng vẽ thêm hoặc xóa bớt bóng, phóng to/thu nhỏ, di chuyển.
+3. Thuật toán nâng sáng và hoà trộn biên mềm (Feathering) để khử bóng tự nhiên, không để lại vết cứng viền.
+
+Module này trả về ảnh đã khử bóng để tiếp tục đưa vào mô hình nhận diện (YOLO, đo đạc hạt giống).
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import pathlib
 import sys
+from typing import Any
+
+# Ensure UTF-8 console output on Windows to prevent UnicodeEncodeError
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+import cv2
 import numpy as np
-import matplotlib.pyplot as plt
 
-# ─────────────────────────────────────────────
-# 1. Đọc ảnh
-# ─────────────────────────────────────────────
-IMAGE_PATH = "47_00004.jpg"
 
-image_bgr = cv2.imread(IMAGE_PATH)
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Phát hiện vùng bóng bằng máy (HSV + Otsu)
+# ─────────────────────────────────────────────────────────────────────────────
 
-if image_bgr is None:
-    raise FileNotFoundError(f"Không thể đọc ảnh: {IMAGE_PATH}")
+def detect_shadow_auto(
+    image_bgr: np.ndarray,
+    hsv_grain_lower: np.ndarray | None = None,
+    hsv_grain_upper: np.ndarray | None = None,
+    blur_ksize: int = 5,
+    morph_ksize: int = 5,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Tự động phát hiện bóng bằng máy:
+    - grain_mask: Pixel có màu hạt lúa (vàng, nâu vàng, trắng ngà)
+    - dark_mask: Pixel tối (phân ngưỡng Otsu nghịch đảo)
+    - shadow_mask: dark_mask AND (NOT grain_mask) -> Vùng tối không mang màu hạt lúa = bóng
+    """
+    if hsv_grain_lower is None:
+        hsv_grain_lower = np.array([5, 0, 30], dtype=np.uint8)
+    if hsv_grain_upper is None:
+        hsv_grain_upper = np.array([40, 255, 255], dtype=np.uint8)
 
-print("Kích thước ảnh:", image_bgr.shape)
+    k_blur = max(3, blur_ksize | 1)
+    k_morph = max(3, morph_ksize | 1)
 
-# ─────────────────────────────────────────────
-# 2. Phát hiện vùng bóng bằng HSV + Otsu
-#
-# Ý tưởng:
-#   Hạt lúa có màu vàng/nâu vàng → lọc bằng dải màu HSV
-#   Bóng là vùng TỐI không mang màu hạt lúa:
-#
-#   grain_mask  = pixel có màu hạt lúa (HSV inRange)
-#   dark_mask   = pixel tối (Otsu THRESH_BINARY_INV)
-#   shadow_mask = dark_mask AND NOT grain_mask
-#               → vùng tối mà KHÔNG phải màu hạt = bóng
-# ─────────────────────────────────────────────
+    # Lọc màu hạt lúa
+    hsv_img = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+    grain_mask = cv2.inRange(hsv_img, hsv_grain_lower, hsv_grain_upper)
 
-# ── Thông số — chỉnh tại đây nếu kết quả chưa vừa ý ──────────────────────
-# Dải màu HSV của hạt lúa (vàng nhạt → nâu vàng → trắng sữa)
-HSV_GRAIN_LOWER = np.array([5,   0,  30])   # [H_min, S_min, V_min]
-HSV_GRAIN_UPPER = np.array([40, 255, 255])  # [H_max, S_max, V_max]
-#   H: 5–40  → bao phủ vàng chanh đến vàng nâu
-#   S: 0–255 → cả hạt nhạt lẫn đậm
-#   V: 30+   → loại pixel quá tối
+    # Phân ngưỡng Otsu vùng tối
+    gray_img = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray_img, (k_blur, k_blur), 0)
+    _, dark_mask = cv2.threshold(
+        blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    )
 
-# Kernel Gaussian làm mờ trước Otsu (lẻ >= 3)
-BLUR_KSIZE = 5   # Lớn hơn → mờ hơn → Otsu ổn định hơn nhưng mất chi tiết
+    # Bóng = Vùng tối AND NOT Hạt lúa
+    not_grain = cv2.bitwise_not(grain_mask)
+    shadow_mask = cv2.bitwise_and(dark_mask, not_grain)
 
-# Kernel morphology làm sạch mask
-MORPH_KSIZE = 5  # Lớn hơn → lấp lỗ hổng rộng hơn, loại nhiễu thô hơn
-# ──────────────────────────────────────────────────────────────────────────
+    # Làm sạch mặt nạ
+    kernel_clean = np.ones((k_morph, k_morph), np.uint8)
+    shadow_mask = cv2.morphologyEx(shadow_mask, cv2.MORPH_OPEN, kernel_clean)
+    shadow_mask = cv2.morphologyEx(shadow_mask, cv2.MORPH_CLOSE, kernel_clean)
 
-# ── Bước 1: Lọc màu hạt lúa (HSV) ────────────────────────────────────────
-# Chuyển BGR → HSV (OpenCV dùng H: 0–179, S/V: 0–255)
-hsv_img = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
-grain_mask = cv2.inRange(hsv_img, HSV_GRAIN_LOWER, HSV_GRAIN_UPPER)
-# grain_mask: 255 = pixel CÓ màu hạt lúa, 0 = pixel KHÔNG có màu hạt lúa
+    return shadow_mask, grain_mask, dark_mask
 
-# ── Bước 2: Phân ngưỡng Otsu — phát hiện vùng tối ───────────────────────
-gray_img = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-blurred  = cv2.GaussianBlur(gray_img, (BLUR_KSIZE, BLUR_KSIZE), 0)
-_, dark_mask = cv2.threshold(
-    blurred, 0, 255,
-    cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-)
-# dark_mask: 255 = pixel TỐI (dưới ngưỡng Otsu), 0 = pixel sáng
 
-# ── Bước 3: Bóng = vùng tối mà KHÔNG phải màu hạt lúa ───────────────────
-not_grain   = cv2.bitwise_not(grain_mask)          # 255 nơi không có hạt
-shadow_mask = cv2.bitwise_and(dark_mask, not_grain) # tối AND không-hạt = bóng
-
-# ── Bước 4: Làm sạch mask bằng morphology ────────────────────────────────
-kernel_clean = np.ones((MORPH_KSIZE, MORPH_KSIZE), np.uint8)
-shadow_mask = cv2.morphologyEx(shadow_mask, cv2.MORPH_OPEN,  kernel_clean)  # loại nhiễu nhỏ
-shadow_mask = cv2.morphologyEx(shadow_mask, cv2.MORPH_CLOSE, kernel_clean)  # lấp lỗ hổng
-
-shadow_pct = shadow_mask.mean() / 255 * 100
-print(f"Vung hat lua: {grain_mask.mean()/255*100:.1f}%  |  "
-      f"Vung toi:    {dark_mask.mean()/255*100:.1f}%  |  "
-      f"Vung bong:   {shadow_pct:.1f}%")
-
-# ─────────────────────────────────────────────
-# 3. Chỉnh sửa mặt nạ thủ công (có Zoom + Pan)
-#
-#   Chuột trái  = Vẽ thêm vùng bóng
-#   Chuột phải  = Xoá vùng bóng
-#   Con lăn     = Phóng to / Thu nhỏ (tâm tại con trỏ)
-#   Chuột giữa  = Kéo pan (giữ + di chuyển)
-#   [ / ]       = Giảm / Tăng kích thước cọ
-#   Enter        = Xác nhận
-#   Esc          = Huỷ
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. Chỉnh sửa mặt nạ thủ công bằng tay (MaskEditor)
+# ─────────────────────────────────────────────────────────────────────────────
 
 class MaskEditor:
+    """Trình chỉnh sửa mặt nạ bóng thủ công (có Zoom + Pan + Vẽ / Xoá bằng chuột).
+
+    Điều khiển chuột:
+        - Chuột trái       : Vẽ thêm bóng (hiển thị màu tím)
+        - Chuột phải       : Xoá vùng bóng
+        - Chuột giữa (kéo) : Di chuyển ảnh (Pan)
+        - Con lăn chuột:
+            * Lăn thường    : Cuộn lên / xuống
+            * Ctrl + Lăn   : Phóng to / thu nhỏ (Zoom) tại con trỏ
+            * Shift + Lăn  : Cuộn trái / phải
+            * Alt + Lăn    : Tăng / giảm kích thước cọ
+
+    Phím tắt:
+        - Enter / Space    : Xác nhận mặt nạ và hoàn tất
+        - Esc              : Đóng editor và giữ nguyên mặt nạ
+        - [ / ]            : Giảm / Tăng kích thước cọ
+        - R / r            : Phục hồi lại mặt nạ tự động do máy phát hiện
+        - C / c            : Xoá trắng toàn bộ mặt nạ
     """
-    Trình chỉnh sửa mask với zoom/pan bằng con lăn chuột.
 
-    Hệ toạ độ:
-        - Toạ độ ảnh  (img_x, img_y) : pixel trên ảnh gốc độ phân giải đầy đủ
-        - Toạ độ màn (scr_x, scr_y) : pixel trên cửa sổ hiển thị
-
-    Biến đổi:
-        scr = (img - view_origin) * zoom
-        img = scr / zoom + view_origin
-    """
-
-    WIN_W = 1280   # chiều rộng cửa sổ hiển thị (pixel)
-    WIN_H = 720    # chiều cao  cửa sổ hiển thị (pixel)
-    ZOOM_MIN = 0.05
-    ZOOM_MAX = 32.0
-    ZOOM_STEP = 1.15   # mỗi bước con lăn nhân/chia bằng hệ số này
+    WIN_W: int = 1280
+    WIN_H: int = 720
+    ZOOM_MIN: float = 0.05
+    ZOOM_MAX: float = 32.0
+    ZOOM_STEP: float = 1.15
 
     def __init__(self, image_bgr: np.ndarray, init_mask: np.ndarray):
         self.img = image_bgr
-        self.mask = init_mask.copy()
         self.ih, self.iw = image_bgr.shape[:2]
+        self.mask = init_mask.copy()
+        self.init_mask_backup = init_mask.copy()
 
-        # Khởi tạo zoom vừa khít cửa sổ
-        self.zoom: float = min(self.WIN_W / self.iw, self.WIN_H / self.ih)
-        # view_origin: góc trên-trái của vùng nhìn thấy tính theo toạ độ ảnh
-        self.vx: float = (self.iw - self.WIN_W / self.zoom) / 2
-        self.vy: float = (self.ih - self.WIN_H / self.zoom) / 2
+        # Tỉ lệ zoom vừa khít cửa sổ hiển thị
+        self.zoom: float = min(self.WIN_W / max(1, self.iw), self.WIN_H / max(1, self.ih))
+        self.vx: float = (self.iw - self.WIN_W / self.zoom) / 2.0
+        self.vy: float = (self.ih - self.WIN_H / self.zoom) / 2.0
+        self.clamp_view()
 
         # Trạng thái chuột
-        self.drawing = False
-        self.erasing = False
-        self.panning = False
-        self.pan_last = (0, 0)   # toạ độ màn lần trước khi pan
+        self.drawing: bool = False
+        self.erasing: bool = False
+        self.panning: bool = False
+        self.pan_last: tuple[int, int] = (0, 0)
+        self.last_img_pt: tuple[int, int] | None = None
 
-        # Kích thước cọ (tính theo pixel ảnh gốc)
-        self.brush = 10
+        # Kích thước cọ vẽ
+        self.brush: int = max(4, int(min(self.ih, self.iw) * 0.015))
+        self.cursor_scr: tuple[int, int] = (0, 0)
 
-        # Lưu toạ độ chuột hiện tại để vẽ con trỏ cọ
-        self.cursor_scr = (0, 0)
-
-    # ── Đổi toạ độ ──────────────────────────────────────────────────────────
-
-    def scr2img(self, sx: int, sy: int):
-        """Toạ độ màn → toạ độ ảnh (float)."""
+    def scr2img(self, sx: int, sy: int) -> tuple[float, float]:
+        """Chuyển toạ độ màn hình sang toạ độ pixel ảnh gốc."""
         return sx / self.zoom + self.vx, sy / self.zoom + self.vy
 
-    # ── Giới hạn view để không ra ngoài ảnh ─────────────────────────────────
-
-    def clamp_view(self):
+    def clamp_view(self) -> None:
+        """Căn chỉnh vùng nhìn thấy hợp lý bên trong khung hiển thị."""
         view_w = self.WIN_W / self.zoom
         view_h = self.WIN_H / self.zoom
-        self.vx = max(0.0, min(self.vx, self.iw - view_w))
-        self.vy = max(0.0, min(self.vy, self.ih - view_h))
+        if self.iw > view_w:
+            self.vx = max(0.0, min(self.vx, self.iw - view_w))
+        else:
+            self.vx = (self.iw - view_w) / 2.0
 
-    # ── Render khung hình hiện tại ───────────────────────────────────────────
+        if self.ih > view_h:
+            self.vy = max(0.0, min(self.vy, self.ih - view_h))
+        else:
+            self.vy = (self.ih - view_h) / 2.0
+
+    def paint_at(self, sx: int, sy: int) -> None:
+        """Vẽ hoặc xoá pixel trên mặt nạ mask tại toạ độ màn hình (sx, sy)."""
+        ix, iy = self.scr2img(sx, sy)
+        curr_pt = (int(round(ix)), int(round(iy)))
+        color = 0 if self.erasing else 255
+
+        if self.last_img_pt is not None:
+            cv2.line(self.mask, self.last_img_pt, curr_pt, color, thickness=self.brush * 2)
+        cv2.circle(self.mask, curr_pt, self.brush, color, -1)
+        self.last_img_pt = curr_pt
 
     def render(self) -> np.ndarray:
-        """Tạo khung BGR (WIN_H × WIN_W) từ view hiện tại."""
-        # Vùng ảnh cần lấy (toạ độ ảnh, float)
-        x0 = self.vx
-        y0 = self.vy
+        """Tạo khung hình hiển thị (WIN_H x WIN_W) với lớp phủ mask tím và con trỏ."""
+        canvas = np.zeros((self.WIN_H, self.WIN_W, 3), dtype=np.uint8)
+
+        x0, y0 = self.vx, self.vy
         x1 = x0 + self.WIN_W / self.zoom
         y1 = y0 + self.WIN_H / self.zoom
 
-        # Clip vào biên ảnh
         ix0 = max(0, int(x0))
         iy0 = max(0, int(y0))
         ix1 = min(self.iw, int(np.ceil(x1)))
         iy1 = min(self.ih, int(np.ceil(y1)))
 
-        # Crop ảnh + mask, tô màu vùng bóng
-        crop_img  = self.img [iy0:iy1, ix0:ix1].copy()
-        crop_mask = self.mask[iy0:iy1, ix0:ix1]
-        ov = crop_img.copy()
-        ov[crop_mask > 0] = (200, 150, 220)   # tím
-        blended = cv2.addWeighted(crop_img, 0.65, ov, 0.35, 0)
+        if ix1 > ix0 and iy1 > iy0:
+            crop_img = self.img[iy0:iy1, ix0:ix1].copy()
+            crop_mask = self.mask[iy0:iy1, ix0:ix1]
 
-        # Scale lên kích thước màn hình
-        dst_w = int(round((ix1 - ix0) * self.zoom))
-        dst_h = int(round((iy1 - iy0) * self.zoom))
-        dst_w = max(1, dst_w)
-        dst_h = max(1, dst_h)
-        interp = cv2.INTER_LINEAR if self.zoom < 4 else cv2.INTER_NEAREST
-        scaled = cv2.resize(blended, (dst_w, dst_h), interpolation=interp)
+            # Tô màu tím nhạt lên vùng bóng
+            overlay = crop_img.copy()
+            overlay[crop_mask > 0] = (200, 150, 220)
+            blended = cv2.addWeighted(crop_img, 0.65, overlay, 0.35, 0)
 
-        # Đặt lên canvas đen
-        canvas = np.zeros((self.WIN_H, self.WIN_W, 3), dtype=np.uint8)
-        # offset của crop trên màn hình
-        off_x = int(round((ix0 - x0) * self.zoom))
-        off_y = int(round((iy0 - y0) * self.zoom))
+            dst_w = max(1, int(round((ix1 - ix0) * self.zoom)))
+            dst_h = max(1, int(round((iy1 - iy0) * self.zoom)))
+            interp = cv2.INTER_LINEAR if self.zoom < 4.0 else cv2.INTER_NEAREST
+            scaled = cv2.resize(blended, (dst_w, dst_h), interpolation=interp)
 
-        # Tính vùng giao giữa scaled và canvas
-        s_x0 = max(0, -off_x);  c_x0 = max(0, off_x)
-        s_y0 = max(0, -off_y);  c_y0 = max(0, off_y)
-        copy_w = min(dst_w - s_x0, self.WIN_W - c_x0)
-        copy_h = min(dst_h - s_y0, self.WIN_H - c_y0)
-        if copy_w > 0 and copy_h > 0:
-            canvas[c_y0:c_y0+copy_h, c_x0:c_x0+copy_w] = \
-                scaled[s_y0:s_y0+copy_h, s_x0:s_x0+copy_w]
+            off_x = int(round((ix0 - x0) * self.zoom))
+            off_y = int(round((iy0 - y0) * self.zoom))
 
-        # ── Vẽ con trỏ cọ (vòng tròn trắng/đỏ) ─────────────────────────────
+            s_x0 = max(0, -off_x)
+            s_y0 = max(0, -off_y)
+            c_x0 = max(0, off_x)
+            c_y0 = max(0, off_y)
+            copy_w = min(dst_w - s_x0, self.WIN_W - c_x0)
+            copy_h = min(dst_h - s_y0, self.WIN_H - c_y0)
+
+            if copy_w > 0 and copy_h > 0:
+                canvas[c_y0:c_y0 + copy_h, c_x0:c_x0 + copy_w] = scaled[s_y0:s_y0 + copy_h, s_x0:s_x0 + copy_w]
+
+        # Con trỏ cọ vẽ
         cx, cy = self.cursor_scr
         brush_r_scr = max(1, int(self.brush * self.zoom))
-        color_cursor = (0, 0, 220) if self.erasing else (255, 255, 255)
+        color_cursor = (0, 0, 255) if self.erasing else (0, 255, 255)
         cv2.circle(canvas, (cx, cy), brush_r_scr, color_cursor, 1, cv2.LINE_AA)
 
-        # ── HUD chữ ──────────────────────────────────────────────────────────
+        # Thanh hướng dẫn (HUD)
+        pct = self.mask.mean() / 255.0 * 100.0
         hud_lines = [
-            f"Zoom: {self.zoom:.2f}x  |  Co: {self.brush}px",
-            "Trai=Ve  Phai=Xoa  Giua=Keo  Lan=Len/Xuong  Ctrl+Lan=Zoom  Shift+Lan=Trai/Phai  Alt+Lan=Co  [/]=Co",
+            f"Zoom: {self.zoom:.2f}x | Co: {self.brush}px | Vung bong: {pct:.1f}%",
+            "Chuot trai: Ve bong | Chuot phai: Xoa | Chuot giua: Keo pan | Ctrl+Lan: Zoom | [/]: Co | R: Reset",
+            "Nhan [ENTER] hoac [SPACE] de XAC NHAN va tiep tuc | [ESC] de dong",
         ]
-        for i, txt in enumerate(hud_lines):
-            y_pos = 22 + i * 22
-            cv2.putText(canvas, txt, (8, y_pos),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3, cv2.LINE_AA)
-            cv2.putText(canvas, txt, (8, y_pos),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 1, cv2.LINE_AA)
+        for i, text in enumerate(hud_lines):
+            y_pos = 24 + i * 24
+            cv2.putText(canvas, text, (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 0, 0), 3, cv2.LINE_AA)
+            cv2.putText(canvas, text, (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 230, 255) if i < 2 else (0, 255, 120), 1, cv2.LINE_AA)
 
         return canvas
 
-    # ── Vẽ / xoá trên mask ───────────────────────────────────────────────────
-
-    def paint(self, sx: int, sy: int):
-        ix, iy = self.scr2img(sx, sy)
-        ix, iy = int(round(ix)), int(round(iy))
-        color = 0 if self.erasing else 255
-        cv2.circle(self.mask, (ix, iy), self.brush, color, -1)
-
-    # ── Callback chuột ───────────────────────────────────────────────────────
-
-    def on_mouse(self, event, x, y, flags, param):
+    def on_mouse(self, event: int, x: int, y: int, flags: int, param: Any) -> None:
         self.cursor_scr = (x, y)
 
-        # ---- Nút trái: vẽ ----
         if event == cv2.EVENT_LBUTTONDOWN:
             self.drawing = True
             self.erasing = False
-            self.paint(x, y)
+            self.last_img_pt = None
+            self.paint_at(x, y)
 
         elif event == cv2.EVENT_LBUTTONUP:
             self.drawing = False
+            self.last_img_pt = None
 
-        # ---- Nút phải: xoá ----
         elif event == cv2.EVENT_RBUTTONDOWN:
             self.drawing = True
             self.erasing = True
-            self.paint(x, y)
+            self.last_img_pt = None
+            self.paint_at(x, y)
 
         elif event == cv2.EVENT_RBUTTONUP:
             self.drawing = False
+            self.last_img_pt = None
 
-        # ---- Nút giữa: kéo pan ----
         elif event == cv2.EVENT_MBUTTONDOWN:
             self.panning = True
             self.pan_last = (x, y)
@@ -245,10 +251,9 @@ class MaskEditor:
         elif event == cv2.EVENT_MBUTTONUP:
             self.panning = False
 
-        # ---- Di chuyển chuột ----
         elif event == cv2.EVENT_MOUSEMOVE:
             if self.drawing:
-                self.paint(x, y)
+                self.paint_at(x, y)
             if self.panning:
                 dx = x - self.pan_last[0]
                 dy = y - self.pan_last[1]
@@ -257,164 +262,297 @@ class MaskEditor:
                 self.clamp_view()
                 self.pan_last = (x, y)
 
-        # ---- Con lăn: modifier quyết định hành động ----
         elif event == cv2.EVENT_MOUSEWHEEL:
-            ctrl_held  = bool(flags & cv2.EVENT_FLAG_CTRLKEY)
+            ctrl_held = bool(flags & cv2.EVENT_FLAG_CTRLKEY)
             shift_held = bool(flags & cv2.EVENT_FLAG_SHIFTKEY)
-            alt_held   = bool(flags & cv2.EVENT_FLAG_ALTKEY)
-            wheel_up   = flags > 0   # delta >> modifier bits, dấu vẫn đúng
-
-            pan_step = self.WIN_H * 0.10 / self.zoom   # 10% chiều cao/rộng cửa sổ
+            alt_held = bool(flags & cv2.EVENT_FLAG_ALTKEY)
+            wheel_up = flags > 0
 
             if ctrl_held:
-                # Ctrl + lăn → Zoom tại vị trí con trỏ
-                factor = self.ZOOM_STEP if wheel_up else 1.0 / self.ZOOM_STEP
-                new_zoom = np.clip(self.zoom * factor, self.ZOOM_MIN, self.ZOOM_MAX)
+                factor = self.ZOOM_STEP if wheel_up else (1.0 / self.ZOOM_STEP)
+                new_zoom = float(np.clip(self.zoom * factor, self.ZOOM_MIN, self.ZOOM_MAX))
                 img_x_before = x / self.zoom + self.vx
                 img_y_before = y / self.zoom + self.vy
                 self.zoom = new_zoom
                 self.vx = img_x_before - x / self.zoom
                 self.vy = img_y_before - y / self.zoom
                 self.clamp_view()
-
             elif shift_held:
-                # Shift + lăn → Pan trái / phải
                 pan_h = self.WIN_W * 0.10 / self.zoom
                 self.vx += -pan_h if wheel_up else pan_h
                 self.clamp_view()
-
             elif alt_held:
-                # Alt + lăn → Thay đổi kích thước cọ
                 if wheel_up:
                     self.brush = min(500, self.brush + 2)
                 else:
                     self.brush = max(1, self.brush - 2)
-
             else:
-                # Lăn thường → Pan lên / xuống
-                self.vy += -pan_step if wheel_up else pan_step
+                pan_v = self.WIN_H * 0.10 / self.zoom
+                self.vy += -pan_v if wheel_up else pan_v
                 self.clamp_view()
 
-    # ── Vòng lặp chính ───────────────────────────────────────────────────────
-
-    def run(self, window_name: str = "Edit Shadow Mask") -> np.ndarray:
-        """Chạy editor. Trả về mask đã chỉnh sửa."""
+    def run(self, window_name: str = "Chinh sua mat na bong (MaskEditor)") -> np.ndarray:
+        """Khởi chạy giao diện chỉnh sửa tay. Trả về mặt nạ đã xác nhận."""
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(window_name, self.WIN_W, self.WIN_H)
         cv2.setMouseCallback(window_name, self.on_mouse)
 
-        while True:
-            cv2.imshow(window_name, self.render())
-            key = cv2.waitKey(16) & 0xFF   # ~60 fps
+        try:
+            while True:
+                if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                    print("-> Cửa sổ đã đóng. Xác nhận mặt nạ hiện tại.")
+                    break
 
-            if key == 13:                  # Enter → xác nhận
-                break
-            elif key == 27:                # Esc → huỷ, thoát bình thường
-                cv2.destroyAllWindows()
-                print("Da huy thao tac.")
-                sys.exit(0)
-            elif key == ord('['):          # Giảm cọ
-                self.brush = max(1, self.brush - 2)
-            elif key == ord(']'):          # Tăng cọ
-                self.brush = min(500, self.brush + 2)
-            elif key == ord('r'):          # Reset về ảnh tự động
-                self.mask[:] = shadow_mask
+                cv2.imshow(window_name, self.render())
+                key = cv2.waitKey(16) & 0xFF
 
-        cv2.destroyAllWindows()
+                if key in (13, 32):  # Enter hoặc Space
+                    print("-> Xác nhận mặt nạ bóng thành công!")
+                    break
+                elif key == 27:  # Esc
+                    print("-> Đã thoát chỉnh sửa tay (giữ mặt nạ hiện tại).")
+                    break
+                elif key == ord('['):
+                    self.brush = max(1, self.brush - 2)
+                elif key == ord(']'):
+                    self.brush = min(500, self.brush + 2)
+                elif key in (ord('r'), ord('R')):
+                    self.mask[:] = self.init_mask_backup
+                    print("-> Đã khôi phục lại mặt nạ tự động ban đầu từ máy.")
+                elif key in (ord('c'), ord('C')):
+                    self.mask.fill(0)
+                    print("-> Đã xoá sạch toàn bộ mặt nạ bóng.")
+        finally:
+            cv2.destroyAllWindows()
+
         return self.mask
 
 
-# Khởi chạy editor
-editor = MaskEditor(image_bgr, shadow_mask)
-edited_mask = editor.run("Edit Shadow Mask")
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. Thuật toán nâng sáng và hoà trộn biên khử bóng
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Lưu mặt nạ đã chỉnh sửa
-
-# ─────────────────────────────────────────────
-# 4. Hàm xoá bóng
-# ─────────────────────────────────────────────
-def remove_shadow(image_bgr: np.ndarray,
-                  mask: np.ndarray,
-                  blur_ksize: int = 61,
-                  max_gain: float = 3.0,
-                  feather: int = 9) -> np.ndarray:
-    """
-    Xoá bóng tại vùng mask (255 = bóng).
-
-    Thuật toán:
-    - Chuyển sang HSV, nâng kênh V (độ sáng) của vùng bóng lên mức
-      ước lượng từ morphological closing (xấp xỉ độ sáng khi không có bóng).
-    - Hoà trộn mềm (feathering) theo biên mask để tránh viền cứng.
-
-    Tham số
-    -------
-    blur_ksize : kích thước kernel closing (pixel); lớn hơn → vùng nền rộng hơn.
-    max_gain   : giới hạn hệ số khuếch đại sáng (tránh cháy trắng).
-    feather    : sigma Gaussian làm mờ biên mask (pixel).
+def remove_shadow(
+    image_bgr: np.ndarray,
+    mask: np.ndarray,
+    blur_ksize: int = 61,
+    max_gain: float = 3.0,
+    feather: int = 9,
+) -> np.ndarray:
+    """Xoá bóng trên ảnh BGR dựa vào mặt nạ mask (255 = bóng):
+    1. Chuyển sang không gian màu HSV để điều chỉnh độ sáng (kênh V).
+    2. Ước lượng độ sáng nền bằng phép đóng hình thái học (morphological closing).
+    3. Tính hệ số khuếch đại sáng gain = clip(V_bg / (V + eps), 1.0, max_gain).
+    4. Nâng độ sáng vùng bóng và hoà trộn mềm (Gaussian feathering) dọc theo biên.
     """
     if image_bgr.ndim != 3 or image_bgr.shape[2] != 3:
         raise ValueError("image_bgr phải là ảnh màu 3 kênh (BGR).")
     if mask.shape[:2] != image_bgr.shape[:2]:
         raise ValueError("Kích thước mask không khớp với ảnh.")
 
+    if not np.any(mask > 0):
+        return image_bgr.copy()
+
     hsv_f = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
-    H, S, V = cv2.split(hsv_f)
+    h, s, v = cv2.split(hsv_f)
 
     # Ước lượng nền sáng cục bộ
     k = max(3, blur_ksize | 1)
     kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
-    V_bg = cv2.morphologyEx(V, cv2.MORPH_CLOSE, kernel_morph)
-    V_bg = cv2.GaussianBlur(V_bg, (0, 0), sigmaX=k / 6)
+    v_bg = cv2.morphologyEx(v, cv2.MORPH_CLOSE, kernel_morph)
+    v_bg = cv2.GaussianBlur(v_bg, (0, 0), sigmaX=k / 6.0)
 
     # Hệ số khuếch đại sáng
     eps = 1e-3
-    gain = np.clip(V_bg / (V + eps), 1.0, max_gain)
-    V_new = np.clip(V * gain, 0, 255)
+    gain = np.clip(v_bg / (v + eps), 1.0, max_gain)
+    v_new = np.clip(v * gain, 0.0, 255.0)
 
-    V_out = V.copy()
-    V_out[mask > 0] = V_new[mask > 0]
+    v_out = v.copy()
+    v_out[mask > 0] = v_new[mask > 0]
 
-    hsv_out = cv2.merge([H, S, V_out]).astype(np.uint8)
+    hsv_out = cv2.merge([h, s, v_out]).astype(np.uint8)
     result_bgr = cv2.cvtColor(hsv_out, cv2.COLOR_HSV2BGR)
 
-    # Feathering
-    mask_f = cv2.GaussianBlur(mask.astype(np.float32), (0, 0), sigmaX=feather) / 255.0
-    mask_f = mask_f[..., np.newaxis]
+    # Hoà trộn biên mềm (Feathering)
+    if feather > 0:
+        mask_f = cv2.GaussianBlur(mask.astype(np.float32), (0, 0), sigmaX=float(feather)) / 255.0
+        mask_f = mask_f[..., np.newaxis]
+        blended = (
+            result_bgr.astype(np.float32) * mask_f
+            + image_bgr.astype(np.float32) * (1.0 - mask_f)
+        )
+        return np.clip(blended, 0, 255).astype(np.uint8)
 
-    blended = (result_bgr.astype(np.float32) * mask_f +
-               image_bgr.astype(np.float32) * (1.0 - mask_f))
-
-    return np.clip(blended, 0, 255).astype(np.uint8)
+    return result_bgr
 
 
-# ─────────────────────────────────────────────
-# 6. Áp dụng xoá bóng và hiển thị kết quả
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. Hàm điều phối chính (Tự động + Chỉnh tay + Trả về ảnh sạch bóng)
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Mở rộng nhẹ mask để bao phủ tốt hơn ở biên bóng
-kernel_dilate = np.ones((5, 5), np.uint8)
-mask_final = cv2.dilate(edited_mask, kernel_dilate, iterations=1)
+def run_shadow_removal(
+    image_input: str | pathlib.Path | np.ndarray,
+    interactive: bool = True,
+    show_comparison: bool = False,
+    output_path: str | None = None,
+    input_format: str = "BGR",
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Quy trình khử bóng hoàn chỉnh:
+    1. Đọc ảnh (nếu là đường dẫn) hoặc lấy mảng ảnh.
+    2. Máy tự động phát hiện vùng bóng bằng HSV + Otsu.
+    3. Nếu interactive=True: Mở MaskEditor cho người dùng chỉnh tay (vẽ/xoá/zoom/pan).
+    4. Áp dụng thuật toán khử bóng nâng sáng kênh V.
+    5. Trả về ảnh đã khử bóng (cùng định dạng với đầu vào), mặt nạ bóng và thông số thống kê.
 
-shadow_removed = remove_shadow(
-    image_bgr,
-    mask_final,
-    blur_ksize=61,
-    max_gain=3.0,
-    feather=9
-)
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, dict]
+        (image_no_shadow, final_mask, stats)
+    """
+    if isinstance(image_input, (str, pathlib.Path)):
+        img_path = str(image_input)
+        image_bgr = cv2.imread(img_path)
+        if image_bgr is None:
+            raise FileNotFoundError(f"Không thể đọc ảnh từ đường dẫn: {img_path}")
+        is_rgb_input = False
+    elif isinstance(image_input, np.ndarray):
+        if input_format.upper() == "RGB":
+            image_bgr = cv2.cvtColor(image_input, cv2.COLOR_RGB2BGR)
+            is_rgb_input = True
+        else:
+            image_bgr = image_input.copy()
+            is_rgb_input = False
+    else:
+        raise TypeError("image_input phải là đường dẫn file hoặc mảng numpy.")
 
-# Hiển thị so sánh: ảnh gốc vs ảnh đã xoá bóng
-image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-fig, axes = plt.subplots(1, 2, figsize=(16, 8))
-axes[0].imshow(image_rgb)
-axes[0].set_title("Ảnh gốc")
-axes[0].axis("off")
-axes[1].imshow(cv2.cvtColor(shadow_removed, cv2.COLOR_BGR2RGB))
-axes[1].set_title("Ảnh đã xoá bóng")
-axes[1].axis("off")
-plt.tight_layout()
-plt.show()
+    # Bước 1: Máy tự động phát hiện vùng bóng
+    auto_mask, grain_mask, dark_mask = detect_shadow_auto(image_bgr)
+    auto_shadow_pct = float(auto_mask.mean() / 255.0 * 100.0)
+    grain_pct = float(grain_mask.mean() / 255.0 * 100.0)
+    print(f"\n[1/3] Khử bóng bằng máy:")
+    print(f"      - Diện tích hạt lúa : {grain_pct:.1f}%")
+    print(f"      - Vùng tối Otsu     : {dark_mask.mean() / 255.0 * 100.0:.1f}%")
+    print(f"      - Vùng bóng phát hiện: {auto_shadow_pct:.1f}%")
 
-# Lưu ảnh kết quả
-cv2.imwrite("image_no_shadow.png", shadow_removed)
-print("Đã lưu ảnh xoá bóng: image_no_shadow.png")
+    # Bước 2: Chỉnh sửa mặt nạ bằng tay nếu bật interactive
+    manual_edited = False
+    if interactive and hasattr(cv2, "namedWindow"):
+        print("\n[2/3] Chỉnh sửa bóng bằng tay (MaskEditor):")
+        print("      - Đang mở cửa sổ... Bạn có thể dùng chuột trái để vẽ thêm bóng,")
+        print("        chuột phải để xoá bớt, con lăn để phóng to/thu nhỏ ảnh.")
+        print("      - Nhấn [ENTER] hoặc [SPACE] trên cửa sổ ảnh khi đã vừa ý.")
+        editor = MaskEditor(image_bgr, auto_mask)
+        chosen_mask = editor.run("Chinh sua mat na bong (MaskEditor)")
+        manual_edited = True
+    else:
+        chosen_mask = auto_mask
+        if interactive:
+            print("\n[2/3] Môi trường không có màn hình GUI, tự động dùng mặt nạ từ máy.")
+
+    # Mở rộng nhẹ mask để khử đều biên
+    kernel_dilate = np.ones((5, 5), np.uint8)
+    final_mask = cv2.dilate(chosen_mask, kernel_dilate, iterations=1)
+    final_shadow_pct = float(final_mask.mean() / 255.0 * 100.0)
+
+    # Bước 3: Nâng sáng khử bóng
+    print(f"\n[3/3] Áp dụng thuật toán khử bóng (diện tích xử lý: {final_shadow_pct:.1f}%)...")
+    if final_shadow_pct > 0.05:
+        shadow_removed_bgr = remove_shadow(
+            image_bgr,
+            final_mask,
+            blur_ksize=61,
+            max_gain=3.0,
+            feather=9,
+        )
+        applied = True
+    else:
+        shadow_removed_bgr = image_bgr.copy()
+        applied = False
+
+    # Lưu ảnh kết quả nếu có yêu cầu
+    if output_path:
+        out_p = pathlib.Path(output_path)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(out_p), shadow_removed_bgr)
+        print(f"-> Đã lưu ảnh sau khử bóng tại: {out_p}")
+
+    # Hiển thị đồ thị so sánh trước và sau nếu yêu cầu
+    if show_comparison:
+        try:
+            import matplotlib.pyplot as plt
+            img_rgb_orig = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+            img_rgb_clean = cv2.cvtColor(shadow_removed_bgr, cv2.COLOR_BGR2RGB)
+            fig, axes = plt.subplots(1, 2, figsize=(14, 7))
+            axes[0].imshow(img_rgb_orig)
+            axes[0].set_title("Ảnh gốc (Có bóng)")
+            axes[0].axis("off")
+            axes[1].imshow(img_rgb_clean)
+            axes[1].set_title("Ảnh sau khi khử bóng (Không còn bóng)")
+            axes[1].axis("off")
+            plt.tight_layout()
+            plt.show()
+        except Exception as e:
+            print(f"Không thể hiển thị matplotlib: {e}")
+
+    # Chuyển đổi định dạng trả về đồng nhất với đầu vào
+    if is_rgb_input:
+        result_img = cv2.cvtColor(shadow_removed_bgr, cv2.COLOR_BGR2RGB)
+    else:
+        result_img = shadow_removed_bgr
+
+    stats = {
+        "enabled": True,
+        "applied": applied,
+        "manual_edited": manual_edited,
+        "shadow_pct": round(final_shadow_pct, 2),
+        "auto_shadow_pct": round(auto_shadow_pct, 2),
+        "grain_pct": round(grain_pct, 2),
+    }
+
+    return result_img, final_mask, stats
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. CLI Execution
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _find_default_image() -> str:
+    candidates = [
+        "47_00004.jpg",
+        "test_images/sample.jpg",
+        "test_images/sample2.jpg",
+        "test_images/Cac-loai-hat-giong-co-xuat-xu-da-dang.jpg",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return "test_images/sample.jpg"
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Khử bóng cho ảnh hạt lúa (Máy tự động + Chỉnh sửa tay).")
+    parser.add_argument("image", nargs="?", default=None, help="Đường dẫn đến file ảnh cần khử bóng.")
+    parser.add_argument("--no-interactive", action="store_true", help="Chỉ khử bóng bằng máy tự động, không mở giao diện chỉnh tay.")
+    parser.add_argument("--show", action="store_true", help="Hiển thị đồ thị so sánh trước và sau khi khử bóng.")
+    parser.add_argument("--output", default="image_no_shadow.png", help="Đường dẫn lưu ảnh sau khử bóng.")
+    args = parser.parse_args()
+
+    target_image = args.image or _find_default_image()
+    if not os.path.exists(target_image):
+        print(f"Lỗi: Không tìm thấy ảnh tại '{target_image}'.")
+        sys.exit(1)
+
+    print(f"=== KHỬ BÓNG CHO ẢNH HẠT LÚA ===")
+    print(f"Ảnh đầu vào: {target_image}")
+    print(f"Chế độ: {'Tự động + Chỉnh tay' if not args.no_interactive else 'Hoàn toàn tự động'}")
+
+    clean_img, mask, stats = run_shadow_removal(
+        image_input=target_image,
+        interactive=not args.no_interactive,
+        show_comparison=args.show,
+        output_path=args.output,
+    )
+
+    print("\n=== HOÀN TẤT KHỬ BÓNG ===")
+    print(f"Ảnh không có bóng đã sẵn sàng: {args.output}")
+    print(f"Thống kê: {stats}")
