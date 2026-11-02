@@ -189,7 +189,7 @@ export default function DashboardPage() {
     });
   };
 
-  const handleProcess = async () => {
+  const handleProcess = async (overrideFile = null) => {
     setProcessing(true);
     setProcessError('');
     setProgress(5);
@@ -206,7 +206,7 @@ export default function DashboardPage() {
     };
 
     try {
-      const file = await getImageForProcessing();
+      const file = overrideFile || (await getImageForProcessing());
       if (!file) {
         setProcessError(text('Vui lòng import ảnh hoặc bật camera trước khi xử lý.', 'Please import an image or turn on the camera before analyzing.'));
         setProgress(0);
@@ -221,7 +221,7 @@ export default function DashboardPage() {
 
       const formData = new FormData();
       formData.append('image', file);
-      formData.append('enableShadowRemoval', enableShadowRemoval);
+      formData.append('enableShadowRemoval', overrideFile ? false : enableShadowRemoval);
 
       setProgress(50);
       setProgressPhase(text('Tiền xử lý và nhận dạng hạt', 'Preprocessing and detecting grains'));
@@ -292,6 +292,74 @@ export default function DashboardPage() {
         setProgress(0);
         setProgressPhase('');
       }, 500);
+    }
+  };
+
+  const handleConfirmShadow = async () => {
+    setShowShadowDialog(false);
+    setEnableShadowRemoval(true);
+    setProcessing(true);
+    setProcessError('');
+    setProgress(15);
+    setProgressPhase(text('[1/3] Đang quét và phát hiện vùng bóng bằng máy (HSV + Otsu)...', '[1/3] Scanning and detecting shadow regions (HSV + Otsu)...'));
+
+    try {
+      const file = await getImageForProcessing();
+      if (!file) {
+        setProcessError(text('Không tìm thấy ảnh để khử bóng.', 'No image found for shadow removal.'));
+        setProcessing(false);
+        return;
+      }
+
+      setProgress(40);
+      setProgressPhase(text('[2/3] Đang phân tích nền và tính toán độ bù sáng...', '[2/3] Analyzing background and computing luminance gain...'));
+
+      const formData = new FormData();
+      formData.append('image', file);
+
+      const shadowApi = isGuest ? publicApi : api;
+      const shadowPath = isGuest ? '/grain/remove-shadow-public' : '/grain/remove-shadow';
+
+      const { data } = await shadowApi.post(shadowPath, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000,
+      });
+
+      setProgress(70);
+      setProgressPhase(text('[3/3] Đang làm mịn biên (Feathering) và hoàn tất khử bóng...', '[3/3] Feathering edges and completing shadow removal...'));
+
+      const cleanB64 = data?.data?.shadow_removed_png_base64;
+      if (cleanB64) {
+        const cleanDataUrl = `data:image/png;base64,${cleanB64}`;
+        setPreviewUrl(cleanDataUrl);
+
+        const byteCharacters = atob(cleanB64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const cleanBlob = new Blob([byteArray], { type: 'image/png' });
+        const cleanFile = new File([cleanBlob], `no_shadow_${file.name || 'image.png'}`, { type: 'image/png' });
+        setImageFile(cleanFile);
+
+        setProgress(85);
+        setProgressPhase(text(
+          'Đã đưa ảnh sạch bóng vào ô! Đang tiến hành nhận dạng và đo đếm hạt...',
+          'Clean image placed in box! Now detecting and measuring grains...'
+        ));
+
+        // Tự động chuyển tiếp sang luồng đo đếm trên ảnh sạch bóng
+        await handleProcess(cleanFile);
+      } else {
+        await handleProcess(file);
+      }
+    } catch (err) {
+      console.error('Lỗi khi khử bóng:', err);
+      setProcessError(resolveProcessError(err, text));
+      setProcessing(false);
+      setProgress(0);
+      setProgressPhase('');
     }
   };
 
@@ -545,10 +613,7 @@ export default function DashboardPage() {
             variant="contained"
             color="primary"
             autoFocus
-            onClick={() => {
-              setEnableShadowRemoval(true);
-              setShowShadowDialog(false);
-            }}
+            onClick={handleConfirmShadow}
           >
             {text('Có (Yes)', 'Yes')}
           </Button>
