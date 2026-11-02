@@ -3,7 +3,6 @@ import mongoose from 'mongoose';
 import { GrainAnalysisRun } from '../models/GrainAnalysisRun.js';
 import {
   analyzeGrainImageBuffer,
-  removeShadowFromImageBuffer,
   getGrainWorkerInfo,
   normalizeGrainParams,
 } from '../services/grainProcessing.service.js';
@@ -112,44 +111,6 @@ export const analyzeGrainImagePublic = async (req, res) => {
     );
   } catch (err) {
     return sendError(res, err.message || 'Image analysis failed', err.statusCode || 500);
-  }
-};
-
-export const removeShadowFromImage = async (req, res) => {
-  try {
-    if (!req.file) {
-      return sendError(res, 'Vui lòng upload ảnh với field name là image', 400);
-    }
-
-    const params = normalizeGrainParams(req.body);
-    const result = await removeShadowFromImageBuffer({
-      buffer: req.file.buffer,
-      originalName: req.file.originalname,
-      params,
-    });
-
-    return sendSuccess(res, result, 'Khử bóng thành công');
-  } catch (err) {
-    return sendError(res, err.message || 'Khử bóng thất bại', err.statusCode || 500);
-  }
-};
-
-export const removeShadowFromImagePublic = async (req, res) => {
-  try {
-    if (!req.file) {
-      return sendError(res, 'Vui lòng upload ảnh với field name là image', 400);
-    }
-
-    const params = normalizeGrainParams(req.body);
-    const result = await removeShadowFromImageBuffer({
-      buffer: req.file.buffer,
-      originalName: req.file.originalname,
-      params,
-    });
-
-    return sendSuccess(res, result, 'Khử bóng thành công');
-  } catch (err) {
-    return sendError(res, err.message || 'Khử bóng thất bại', err.statusCode || 500);
   }
 };
 
@@ -439,8 +400,6 @@ const compactAnalyzeResponse = (result) => ({
   measurements: result.measurements || [],
   csv: result.csv || '',
   original_png_base64: result.original_png_base64 || '',
-  shadow_removed_png_base64: result.shadow_removed_png_base64 || '',
-  shadow_mask_png_base64: result.shadow_mask_png_base64 || '',
   overlay_png_base64: result.overlay_png_base64 || '',
   sam_mask_png_base64: result.sam_mask_png_base64 || '',
   preprocessed_png_base64: result.preprocessed_png_base64 || '',

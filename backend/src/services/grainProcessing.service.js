@@ -46,32 +46,6 @@ export const analyzeGrainImageBuffer = async ({ buffer, originalName, params }) 
   }
 };
 
-export const removeShadowFromImageBuffer = async ({ buffer, originalName, params }) => {
-  if (!buffer?.length) {
-    const error = new Error('Không có dữ liệu ảnh đầu vào');
-    error.statusCode = 400;
-    throw error;
-  }
-
-  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'seed-shadow-'));
-  const extension = safeExtension(originalName);
-  const imagePath = path.join(tempDir, `input${extension}`);
-
-  try {
-    await fs.promises.writeFile(imagePath, buffer);
-    const normalized = normalizeGrainParams(params);
-    const payload = await runPythonWorker(imagePath, normalized, 'shadow-only');
-    if (!payload.ok) {
-      const error = new Error(payload.error || 'Khử bóng thất bại');
-      error.statusCode = 422;
-      throw error;
-    }
-    return payload.data;
-  } finally {
-    fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
-  }
-};
-
 export const getGrainWorkerInfo = () => ({
   python: resolvePythonExecutable(),
   workerScript,
@@ -79,20 +53,15 @@ export const getGrainWorkerInfo = () => ({
   defaultParams: grainDefaultParams,
 });
 
-const runPythonWorker = (imagePath, params, mode = 'analyze') => new Promise((resolve, reject) => {
+const runPythonWorker = (imagePath, params) => new Promise((resolve, reject) => {
   const python = resolvePythonExecutable();
-  const workerArgs = [
+  const child = spawn(python, [
     workerScript,
     '--image',
     imagePath,
     '--params-json',
     JSON.stringify(params),
-  ];
-  if (mode) {
-    workerArgs.push('--mode', mode);
-  }
-
-  const child = spawn(python, workerArgs, {
+  ], {
     cwd: backendRoot,
     windowsHide: true,
   });

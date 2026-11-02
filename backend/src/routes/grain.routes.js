@@ -4,8 +4,6 @@ import multer from 'multer';
 import {
   analyzeGrainImage,
   analyzeGrainImagePublic,
-  removeShadowFromImage,
-  removeShadowFromImagePublic,
   deleteGrainRun,
   getGrainHealth,
   getGrainRun,
@@ -35,13 +33,11 @@ const upload = multer({
 
 router.get('/health', getGrainHealth);
 router.post('/analyze-public', upload.single('image'), analyzeGrainImagePublic);
-router.post('/remove-shadow-public', upload.single('image'), removeShadowFromImagePublic);
 router.get('/runs', authenticate, listGrainRuns);
 router.post('/runs/import', authenticate, importOfflineGrainRuns);
-router.get('/runs/:id', authenticate, getGrainRun);
+router.get('/runs/:id', getGrainRun);
 router.put('/runs/:id/result', authenticate, updateGrainRunResult);
 router.delete('/runs/:id', authenticate, deleteGrainRun);
 router.post('/analyze', authenticate, upload.single('image'), analyzeGrainImage);
-router.post('/remove-shadow', authenticate, upload.single('image'), removeShadowFromImage);
 
 export default router;
