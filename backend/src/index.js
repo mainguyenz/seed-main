@@ -25,6 +25,9 @@ const webDistDir = process.env.WEB_DIST_DIR || path.resolve(__dirname, '..', 'pu
 const app = express();
 const httpServer = createServer(app);
 
+// Trust reverse proxy (Render, Nginx, Azure) so rateLimit & client IP work correctly
+app.set('trust proxy', 1);
+
 // ---- Socket.IO ----
 const io = new SocketServer(httpServer, {
   cors: { origin: env.ALLOWED_ORIGINS, methods: ['GET', 'POST'] },
@@ -56,6 +59,7 @@ app.use('/api', rateLimit({
   windowMs: env.RATE_LIMIT.WINDOW_MS,
   max: env.RATE_LIMIT.MAX,
   message: { success: false, message: 'Quá nhiều yêu cầu, vui lòng thử lại sau.' },
+  validate: { xForwardedForHeader: false },
 }));
 
 // ---- Health Check ----
@@ -105,6 +109,13 @@ if (env.isProd && fs.existsSync(path.join(webDistDir, 'index.html'))) {
 // ---- Error Handling ----
 app.use(notFound);
 app.use(errorHandler);
+
+process.on('uncaughtException', (err) => {
+  console.error('💥 Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
+});
 
 httpServer.on('error', (error) => {
   if (error.code === 'EADDRINUSE') {
