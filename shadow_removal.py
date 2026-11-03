@@ -356,11 +356,25 @@ def remove_shadow(
     hsv_f = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
     h, s, v = cv2.split(hsv_f)
 
-    # Ước lượng nền sáng cục bộ
+    # Ước lượng nền sáng cục bộ hiệu năng cao (downsampling)
+    h_orig, w_orig = v.shape[:2]
     k = max(3, blur_ksize | 1)
-    kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
-    v_bg = cv2.morphologyEx(v, cv2.MORPH_CLOSE, kernel_morph)
-    v_bg = cv2.GaussianBlur(v_bg, (0, 0), sigmaX=k / 6.0)
+
+    scale = min(1.0, 480.0 / max(h_orig, w_orig))
+    if scale < 0.9:
+        small_w = max(16, int(round(w_orig * scale)))
+        small_h = max(16, int(round(h_orig * scale)))
+        v_small = cv2.resize(v, (small_w, small_h), interpolation=cv2.INTER_AREA)
+        k_small = max(3, int(round(k * scale)) | 1)
+        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_small, k_small))
+        v_bg_small = cv2.morphologyEx(v_small, cv2.MORPH_CLOSE, kernel_morph)
+        v_bg_small = cv2.GaussianBlur(v_bg_small, (0, 0), sigmaX=max(1.0, k_small / 6.0))
+        v_bg = cv2.resize(v_bg_small, (w_orig, h_orig), interpolation=cv2.INTER_LINEAR)
+        del v_small, v_bg_small
+    else:
+        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+        v_bg = cv2.morphologyEx(v, cv2.MORPH_CLOSE, kernel_morph)
+        v_bg = cv2.GaussianBlur(v_bg, (0, 0), sigmaX=k / 6.0)
 
     # Hệ số khuếch đại sáng
     eps = 1e-3
@@ -369,9 +383,12 @@ def remove_shadow(
 
     v_out = v.copy()
     v_out[mask > 0] = v_new[mask > 0]
+    del v_bg, gain, v_new
 
     hsv_out = cv2.merge([h, s, v_out]).astype(np.uint8)
+    del h, s, v_out, hsv_f
     result_bgr = cv2.cvtColor(hsv_out, cv2.COLOR_HSV2BGR)
+    del hsv_out
 
     # Hoà trộn biên mềm (Feathering)
     if feather > 0:
@@ -381,6 +398,7 @@ def remove_shadow(
             result_bgr.astype(np.float32) * mask_f
             + image_bgr.astype(np.float32) * (1.0 - mask_f)
         )
+        del mask_f
         return np.clip(blended, 0, 255).astype(np.uint8)
 
     return result_bgr

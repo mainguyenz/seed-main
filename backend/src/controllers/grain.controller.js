@@ -408,6 +408,8 @@ const compactAnalyzeResponse = (result) => ({
   mask_png_base64: result.mask_png_base64 || '',
   labels_png_base64: result.labels_png_base64 || '',
   label_map_png_base64: result.label_map_png_base64 || '',
+  shadow_removed_png_base64: result.shadow_removed_png_base64 || '',
+  shadow_removal: result.shadow_removal || { enabled: false },
 });
 
 const sanitizeImportedResult = (raw) => {
