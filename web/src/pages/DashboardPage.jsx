@@ -88,7 +88,6 @@ export default function DashboardPage() {
   const [processError, setProcessError] = useState('');
   const [result, setResult] = useState(null);
   const [previewMode, setPreviewMode] = useState('overlay');
-  const [enableShadowRemoval, setEnableShadowRemoval] = useState(false);
   const [calibration, setCalibration] = useState(emptyCalibration);
   const [calibrationPreviewRequested, setCalibrationPreviewRequested] = useState(false);
   const [drawingCalibration, setDrawingCalibration] = useState(false);
@@ -282,7 +281,6 @@ export default function DashboardPage() {
 
       const formData = new FormData();
       formData.append('image', file);
-      if (enableShadowRemoval) formData.append('enableShadowRemoval', 'true');
 
       setProgress(50);
       setProgressPhase(text('Tiền xử lý và nhận dạng hạt', 'Preprocessing and detecting grains'));
@@ -424,7 +422,6 @@ export default function DashboardPage() {
     mask: result?.mask_png_base64,
     labels: result?.labels_png_base64,
     preprocessed: result?.preprocessed_png_base64 || result?.original_png_base64,
-    shadow_removed: result?.shadow_removed_png_base64,
   };
   const activePreview = previewImages[previewMode] || result?.overlay_png_base64;
   const displayImage = activePreview
@@ -526,7 +523,6 @@ export default function DashboardPage() {
             calibrationReady={calibrationReady}
             displayImage={displayImage}
             drawingCalibration={drawingCalibration}
-            enableShadowRemoval={enableShadowRemoval}
             fileName={fileName}
             imageRef={imageRef}
             previewMode={previewMode}
@@ -540,7 +536,6 @@ export default function DashboardPage() {
             onProcess={handleProcess}
             onCalibrationChange={setCalibration}
             onDrawingCalibrationChange={setDrawingCalibration}
-            onEnableShadowRemovalChange={setEnableShadowRemoval}
             onPreviewModeChange={(mode) => {
               setCalibrationPreviewRequested(false);
               setPreviewMode(mode);

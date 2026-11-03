@@ -19,31 +19,7 @@ def analyze_image(image_path: Path, params: dict) -> dict:
     # ── Stage 0: load & preprocess ──────────────────────────────────────────
     max_side = int_param(params, "maxSide")
     prepared = read_image(image_path, max_side)
-
-    # ── Stage 0b: optional shadow removal (disabled by default) ─────────────
-    shadow_removal_stats: dict = {"enabled": False, "applied": False, "shadow_pct": 0.0}
-    shadow_removed_png = ""
-    if bool_param(params, "enableShadowRemoval"):
-        try:
-            from .shadow_removal import detect_and_remove_shadow
-            rgb_clean, _shadow_mask, shadow_removal_stats = detect_and_remove_shadow(
-                prepared.rgb,
-                params=params,
-                interactive=False,  # always headless on server
-            )
-            # Only use cleaned image if shadow was actually detected & removed
-            if shadow_removal_stats.get("applied"):
-                shadow_removed_png = png_base64(rgb_clean)
-                segment_input_rgb = rgb_clean
-            else:
-                segment_input_rgb = prepared.rgb
-        except Exception as exc:
-            shadow_removal_stats = {"enabled": True, "applied": False, "error": str(exc)}
-            segment_input_rgb = prepared.rgb
-    else:
-        segment_input_rgb = prepared.rgb
-
-    segment_input = apply_light_preprocessing(segment_input_rgb, params)
+    segment_input = apply_light_preprocessing(prepared.rgb, params)
 
     # ── Stage 1: YOLO-seg ONNX inference ────────────────────────────────────
     yolo_instances = predict_instances(segment_input, params)
@@ -217,8 +193,6 @@ def analyze_image(image_path: Path, params: dict) -> dict:
         "mask_png_base64":         png_base64(mask_image),
         "labels_png_base64":       png_base64(labels_image),
         "label_map_png_base64":    png_base64(label_map),
-        "shadow_removed_png_base64": shadow_removed_png,
-        "shadow_removal":          shadow_removal_stats,
     }
 
     import gc

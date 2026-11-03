@@ -145,7 +145,6 @@ export const DashboardPreviewPanel = ({
   calibrationReady,
   displayImage,
   drawingCalibration,
-  enableShadowRemoval = false,
   fileName,
   imageRef,
   previewMode,
@@ -159,7 +158,6 @@ export const DashboardPreviewPanel = ({
   onProcess,
   onCalibrationChange,
   onDrawingCalibrationChange,
-  onEnableShadowRemovalChange,
   onPreviewModeChange,
   onShowCalibrationImage,
   onApplyCalibration,
@@ -830,18 +828,6 @@ export const DashboardPreviewPanel = ({
                 accept="image/jpeg,image/png"
                 onChange={onFile}
               />
-            </Button>
-            <Button
-              variant={enableShadowRemoval ? "contained" : "outlined"}
-              color={enableShadowRemoval ? "warning" : "inherit"}
-              disabled={processing}
-              onClick={() => onEnableShadowRemovalChange?.(!enableShadowRemoval)}
-              size="small"
-              title={text("Bật/tắt xóa bóng trước khi phân tích", "Toggle shadow removal before analysis")}
-            >
-              {enableShadowRemoval
-                ? text("🌑 Xóa bóng: Bật", "🌑 Shadow: On")
-                : text("🌑 Xóa bóng", "🌑 Shadow removal")}
             </Button>
             <Button
               variant="outlined"
