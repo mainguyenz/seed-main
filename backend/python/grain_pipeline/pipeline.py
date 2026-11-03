@@ -16,10 +16,47 @@ from .yolo_segment import predict_instances
 
 
 def analyze_image(image_path: Path, params: dict) -> dict:
-    # ── Stage 0: load & preprocess ──────────────────────────────────────────
+    # ── Stage 0: load image ─────────────────────────────────────────────────
     max_side = int_param(params, "maxSide")
     prepared = read_image(image_path, max_side)
-    segment_input = apply_light_preprocessing(prepared.rgb, params)
+
+    # ── Stage 0b (UC: Conditional Shadow Handling) ──────────────────────────
+    # Tự động xác nhận có bóng hay không:
+    # - NẾU CÓ BÓNG: Chạy xóa bóng -> Đưa ảnh sạch vào các bước phân tích sau
+    # - NẾU KHÔNG CÓ BÓNG: Chuyển thẳng qua phần sau (giữ nguyên ảnh gốc)
+    shadow_stats: dict = {
+        "enabled": False,
+        "shadow_detected": False,
+        "applied": False,
+        "shadow_pct": 0.0,
+        "reason": "disabled",
+    }
+    shadow_removed_png = ""
+    segment_input_rgb = prepared.rgb
+
+    if bool_param(params, "enableShadowRemoval"):
+        try:
+            from .shadow_removal import check_and_remove_shadow_uc
+            cleaned_rgb, _shadow_mask, shadow_stats = check_and_remove_shadow_uc(
+                prepared.rgb,
+                params=params,
+            )
+            if shadow_stats.get("applied"):
+                shadow_removed_png = png_base64(cleaned_rgb)
+                segment_input_rgb = cleaned_rgb
+            else:
+                segment_input_rgb = prepared.rgb
+        except Exception as exc:
+            shadow_stats = {
+                "enabled": True,
+                "shadow_detected": False,
+                "applied": False,
+                "error": str(exc),
+                "reason": "error_fallback_to_original",
+            }
+            segment_input_rgb = prepared.rgb
+
+    segment_input = apply_light_preprocessing(segment_input_rgb, params)
 
     # ── Stage 1: YOLO-seg ONNX inference ────────────────────────────────────
     yolo_instances = predict_instances(segment_input, params)
@@ -187,6 +224,8 @@ def analyze_image(image_path: Path, params: dict) -> dict:
         "measurements":            measurements,
         "csv":                     measurements_csv(measurements),
         "original_png_base64":     original_png,
+        "shadow_removed_png_base64": shadow_removed_png,
+        "shadow_removal":            shadow_stats,
         "preprocessed_png_base64": preprocessed_png,
         "overlay_png_base64":      png_base64(overlay),
         "sam_mask_png_base64":     "",
