@@ -48,7 +48,7 @@ def detect_shadow_auto(
     - shadow_mask: dark_mask AND (NOT grain_mask) -> Vùng tối không mang màu hạt lúa = bóng
     """
     if hsv_grain_lower is None:
-        hsv_grain_lower = np.array([5, 25, 30], dtype=np.uint8)
+        hsv_grain_lower = np.array([5, 0, 30], dtype=np.uint8)
     if hsv_grain_upper is None:
         hsv_grain_upper = np.array([40, 255, 255], dtype=np.uint8)
 
@@ -339,15 +339,14 @@ def remove_shadow(
     max_gain: float = 3.0,
     feather: int = 9,
 ) -> np.ndarray:
-    """Thuật toán khử bóng nâng sáng kênh V với tối ưu hóa đa thang đo (Downsampling).
-
-    Tối ưu hóa:
-      - Ước lượng ánh sáng nền trên ảnh thu nhỏ giúp giảm 95% CPU và RAM.
-      - Phóng to lại bằng song tuyến (Bilinear) mượt mà, không răng cưa.
-      - Hoà trộn biên mềm (Feathering) tự nhiên không lộ vết nối.
+    """Xoá bóng trên ảnh BGR dựa vào mặt nạ mask (255 = bóng):
+    1. Chuyển sang không gian màu HSV để điều chỉnh độ sáng (kênh V).
+    2. Ước lượng độ sáng nền bằng phép đóng hình thái học (morphological closing).
+    3. Tính hệ số khuếch đại sáng gain = clip(V_bg / (V + eps), 1.0, max_gain).
+    4. Nâng độ sáng vùng bóng và hoà trộn mềm (Gaussian feathering) dọc theo biên.
     """
     if image_bgr.ndim != 3 or image_bgr.shape[2] != 3:
-        raise ValueError("Kích thước ảnh không hợp lệ.")
+        raise ValueError("image_bgr phải là ảnh màu 3 kênh (BGR).")
     if mask.shape[:2] != image_bgr.shape[:2]:
         raise ValueError("Kích thước mask không khớp với ảnh.")
 
@@ -357,25 +356,11 @@ def remove_shadow(
     hsv_f = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
     h, s, v = cv2.split(hsv_f)
 
-    # Ước lượng nền sáng cục bộ hiệu năng cao (downsampling)
-    h_orig, w_orig = v.shape[:2]
+    # Ước lượng nền sáng cục bộ
     k = max(3, blur_ksize | 1)
-
-    scale = min(1.0, 480.0 / max(h_orig, w_orig))
-    if scale < 0.9:
-        small_w = max(16, int(round(w_orig * scale)))
-        small_h = max(16, int(round(h_orig * scale)))
-        v_small = cv2.resize(v, (small_w, small_h), interpolation=cv2.INTER_AREA)
-        k_small = max(3, int(round(k * scale)) | 1)
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_small, k_small))
-        v_bg_small = cv2.morphologyEx(v_small, cv2.MORPH_CLOSE, kernel_morph)
-        v_bg_small = cv2.GaussianBlur(v_bg_small, (0, 0), sigmaX=max(1.0, k_small / 6.0))
-        v_bg = cv2.resize(v_bg_small, (w_orig, h_orig), interpolation=cv2.INTER_LINEAR)
-        del v_small, v_bg_small
-    else:
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
-        v_bg = cv2.morphologyEx(v, cv2.MORPH_CLOSE, kernel_morph)
-        v_bg = cv2.GaussianBlur(v_bg, (0, 0), sigmaX=k / 6.0)
+    kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    v_bg = cv2.morphologyEx(v, cv2.MORPH_CLOSE, kernel_morph)
+    v_bg = cv2.GaussianBlur(v_bg, (0, 0), sigmaX=k / 6.0)
 
     # Hệ số khuếch đại sáng
     eps = 1e-3
@@ -384,12 +369,9 @@ def remove_shadow(
 
     v_out = v.copy()
     v_out[mask > 0] = v_new[mask > 0]
-    del v_bg, gain, v_new
 
     hsv_out = cv2.merge([h, s, v_out]).astype(np.uint8)
-    del h, s, v_out, hsv_f
     result_bgr = cv2.cvtColor(hsv_out, cv2.COLOR_HSV2BGR)
-    del hsv_out
 
     # Hoà trộn biên mềm (Feathering)
     if feather > 0:
@@ -399,104 +381,9 @@ def remove_shadow(
             result_bgr.astype(np.float32) * mask_f
             + image_bgr.astype(np.float32) * (1.0 - mask_f)
         )
-        del mask_f
         return np.clip(blended, 0, 255).astype(np.uint8)
 
     return result_bgr
-
-
-def check_and_remove_shadow_uc(
-    image_input: str | pathlib.Path | np.ndarray,
-    threshold_pct: float = 0.5,
-    blur_ksize: int = 5,
-    morph_ksize: int = 5,
-    shadow_blur_ksize: int = 61,
-    max_gain: float = 3.0,
-    feather: int = 9,
-    input_format: str = "RGB",
-) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Use Case (UC): Tiền xử lý xác nhận bóng và xóa bóng có điều kiện.
-
-    Quy trình:
-      1. Kiểm tra xác nhận có bóng hay không:
-         - Máy chạy phát hiện bóng tự động nhanh (HSV lọc màu hạt + Otsu vùng tối).
-         - Tính tỷ lệ phần trăm vùng bóng (shadow_pct).
-         - Xác nhận CÓ BÓNG nếu shadow_pct >= threshold_pct (mặc định 0.5%).
-      2. Phân nhánh hành động:
-         - NẾU CÓ BÓNG: Chạy thuật toán xóa bóng (remove_shadow) đã được tối ưu hóa đa
-           thang đo, trả về ảnh đã được làm sạch bóng để chuyển sang bước sau.
-         - NẾU KHÔNG CÓ BÓNG: Bỏ qua hoàn toàn thuật toán xóa bóng, giữ nguyên 100%
-           ảnh gốc, không tốn thêm tài nguyên và chuyển thẳng qua bước sau.
-    """
-    if isinstance(image_input, (str, pathlib.Path)):
-        img_path = str(image_input)
-        image_bgr = cv2.imread(img_path)
-        if image_bgr is None:
-            raise FileNotFoundError(f"Không thể đọc ảnh từ đường dẫn: {img_path}")
-        is_rgb = False
-    elif isinstance(image_input, np.ndarray):
-        if input_format.upper() == "RGB":
-            image_bgr = cv2.cvtColor(image_input, cv2.COLOR_RGB2BGR)
-            is_rgb = True
-        else:
-            image_bgr = image_input.copy()
-            is_rgb = False
-    else:
-        raise TypeError("image_input phải là đường dẫn file hoặc mảng numpy.")
-
-    # 1. Bước 1: Máy tự động xác nhận có bóng không
-    auto_mask, grain_mask, dark_mask = detect_shadow_auto(
-        image_bgr,
-        blur_ksize=blur_ksize,
-        morph_ksize=morph_ksize,
-    )
-    auto_shadow_pct = float(auto_mask.mean() / 255.0 * 100.0)
-    grain_pct = float(grain_mask.mean() / 255.0 * 100.0)
-
-    # Mở rộng nhẹ mask để khử sạch viền bóng
-    kernel_dilate = np.ones((5, 5), np.uint8)
-    final_mask = cv2.dilate(auto_mask, kernel_dilate, iterations=1)
-    final_shadow_pct = float(final_mask.mean() / 255.0 * 100.0)
-
-    has_shadow = final_shadow_pct >= threshold_pct
-
-    # 2. Phân nhánh hành động: Có bóng -> Xóa bóng; Không có -> Đi tiếp
-    if has_shadow:
-        print(f"[UC Shadow] XÁC NHẬN CÓ BÓNG ({final_shadow_pct:.2f}% >= {threshold_pct}%). Bắt đầu xóa bóng...")
-        removed_bgr = remove_shadow(
-            image_bgr,
-            final_mask,
-            blur_ksize=shadow_blur_ksize,
-            max_gain=max_gain,
-            feather=feather,
-        )
-        applied = True
-        result_bgr = removed_bgr
-        reason = f"shadow_detected_and_removed_{final_shadow_pct:.2f}pct"
-    else:
-        print(f"[UC Shadow] XÁC NHẬN KHÔNG CÓ BÓNG ({final_shadow_pct:.2f}% < {threshold_pct}%). Bỏ qua xóa bóng, chuyển qua phần sau.")
-        result_bgr = image_bgr
-        final_mask = np.zeros(image_bgr.shape[:2], dtype=np.uint8)
-        applied = False
-        reason = f"no_shadow_detected_{final_shadow_pct:.2f}pct"
-
-    if is_rgb:
-        result_img = cv2.cvtColor(result_bgr, cv2.COLOR_BGR2RGB)
-    else:
-        result_img = result_bgr
-
-    stats = {
-        "enabled": True,
-        "shadow_detected": bool(has_shadow),
-        "applied": bool(applied),
-        "shadow_pct": round(final_shadow_pct, 2),
-        "auto_shadow_pct": round(auto_shadow_pct, 2),
-        "grain_pct": round(grain_pct, 2),
-        "threshold_pct": threshold_pct,
-        "reason": reason,
-    }
-
-    return result_img, final_mask, stats
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -422,7 +422,6 @@ export default function DashboardPage() {
     mask: result?.mask_png_base64,
     labels: result?.labels_png_base64,
     preprocessed: result?.preprocessed_png_base64 || result?.original_png_base64,
-    shadow_removed: result?.shadow_removed_png_base64,
   };
   const activePreview = previewImages[previewMode] || result?.overlay_png_base64;
   const displayImage = activePreview

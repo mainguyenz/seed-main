@@ -79,7 +79,7 @@ def detect_shadow_auto(
         (shadow_mask, grain_mask, dark_mask) - each uint8 with values 0 or 255.
     """
     if hsv_grain_lower is None:
-        hsv_grain_lower = np.array([5, 25, 30], dtype=np.uint8)
+        hsv_grain_lower = np.array([5, 0, 30], dtype=np.uint8)
     if hsv_grain_upper is None:
         hsv_grain_upper = np.array([40, 255, 255], dtype=np.uint8)
 
@@ -371,13 +371,34 @@ def remove_shadow(
     max_gain: float = 3.0,
     feather: int = 9,
 ) -> np.ndarray:
-    """Remove shadows by adaptively lifting luminance in the HSV color space.
+    """Remove shadows from the masked regions of a BGR image.
 
-    Optimization details:
-      - Multi-scale downsampling for background luminance estimation saves ~95% RAM and CPU,
-        preventing OOM and 502 Bad Gateway timeouts on Render 512MB RAM.
-      - Re-interpolated back via bilinear sampling for smooth, artifact-free gain.
-      - Soft Gaussian feathering blends seams between shadow and non-shadow regions.
+    Algorithm:
+      1. Converts to HSV color space and isolates V (value/luminance).
+      2. Estimates local background brightness using morphological closing
+         with an elliptical kernel, followed by gentle Gaussian smoothing.
+      3. Calculates adaptive luminance gain: gain = clip(V_bg / (V + eps), 1.0, max_gain).
+      4. Replaces V values inside the shadow mask with boosted values.
+      5. Softly blends the result with the original image using Gaussian feathering
+         along the mask boundaries to eliminate harsh seams.
+
+    Parameters
+    ----------
+    image_bgr : np.ndarray
+        3-channel BGR image.
+    mask : np.ndarray
+        Binary mask (255 = shadow, 0 = non-shadow).
+    blur_ksize : int
+        Kernel size for background closing estimation (odd integer >= 3).
+    max_gain : float
+        Maximum luminance gain ceiling to prevent overexposure/clipping.
+    feather : int
+        Gaussian feathering sigma (pixels) along the mask edge.
+
+    Returns
+    -------
+    np.ndarray
+        Shadow-removed BGR image.
     """
     if image_bgr.ndim != 3 or image_bgr.shape[2] != 3:
         raise ValueError("image_bgr must be a 3-channel image.")
@@ -390,25 +411,11 @@ def remove_shadow(
     hsv_f = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
     h, s, v = cv2.split(hsv_f)
 
-    # Multi-scale background luminance estimation
-    h_orig, w_orig = v.shape[:2]
+    # Local background luminance estimation
     k = max(3, blur_ksize | 1)
-
-    scale = min(1.0, 480.0 / max(h_orig, w_orig))
-    if scale < 0.9:
-        small_w = max(16, int(round(w_orig * scale)))
-        small_h = max(16, int(round(h_orig * scale)))
-        v_small = cv2.resize(v, (small_w, small_h), interpolation=cv2.INTER_AREA)
-        k_small = max(3, int(round(k * scale)) | 1)
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_small, k_small))
-        v_bg_small = cv2.morphologyEx(v_small, cv2.MORPH_CLOSE, kernel_morph)
-        v_bg_small = cv2.GaussianBlur(v_bg_small, (0, 0), sigmaX=max(1.0, k_small / 6.0))
-        v_bg = cv2.resize(v_bg_small, (w_orig, h_orig), interpolation=cv2.INTER_LINEAR)
-        del v_small, v_bg_small
-    else:
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
-        v_bg = cv2.morphologyEx(v, cv2.MORPH_CLOSE, kernel_morph)
-        v_bg = cv2.GaussianBlur(v_bg, (0, 0), sigmaX=k / 6.0)
+    kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    v_bg = cv2.morphologyEx(v, cv2.MORPH_CLOSE, kernel_morph)
+    v_bg = cv2.GaussianBlur(v_bg, (0, 0), sigmaX=k / 6.0)
 
     # Gain multiplier
     eps = 1e-3
@@ -417,12 +424,9 @@ def remove_shadow(
 
     v_out = v.copy()
     v_out[mask > 0] = v_new[mask > 0]
-    del v_bg, gain, v_new
 
     hsv_out = cv2.merge([h, s, v_out]).astype(np.uint8)
-    del h, s, v_out, hsv_f
     result_bgr = cv2.cvtColor(hsv_out, cv2.COLOR_HSV2BGR)
-    del hsv_out
 
     # Gaussian feathering to prevent sharp border artifacts
     if feather > 0:
@@ -432,90 +436,9 @@ def remove_shadow(
             result_bgr.astype(np.float32) * mask_f
             + image_bgr.astype(np.float32) * (1.0 - mask_f)
         )
-        del mask_f
         return np.clip(blended, 0, 255).astype(np.uint8)
 
     return result_bgr
-
-
-def check_and_remove_shadow_uc(
-    rgb: np.ndarray,
-    params: dict | None = None,
-) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Use Case (UC): Tiền xử lý xác nhận bóng và xóa bóng có điều kiện.
-
-    Quy trình:
-      1. Kiểm tra xác nhận có bóng hay không:
-         - Máy chạy phát hiện bóng tự động nhanh (HSV lọc màu hạt + Otsu vùng tối).
-         - Tính tỷ lệ phần trăm vùng bóng (shadow_pct).
-         - Xác nhận CÓ BÓNG nếu shadow_pct >= shadowThresholdPct (mặc định 0.5%).
-      2. Phân nhánh hành động:
-         - NẾU CÓ BÓNG: Chạy thuật toán xóa bóng (remove_shadow) đã được tối ưu hóa đa
-           thang đo, trả về ảnh đã được làm sạch bóng để chuyển sang bước sau.
-         - NẾU KHÔNG CÓ BÓNG: Bỏ qua hoàn toàn thuật toán xóa bóng, giữ nguyên 100%
-           ảnh gốc, không tốn thêm tài nguyên và chuyển thẳng qua bước sau.
-    """
-    if params is None:
-        params = {}
-
-    threshold_pct = float_param(params, "shadowThresholdPct", 0.5, 0.01, 50.0)
-    blur_ksize = int_param(params, "shadowBlurKsize", 5, 3, 31)
-    morph_ksize = int_param(params, "shadowMorphKsize", 5, 3, 31)
-    shadow_blur_ksize = int_param(params, "shadowRemovalBlurKsize", 61, 3, 201)
-    max_gain = float_param(params, "shadowMaxGain", 3.0, 1.0, 10.0)
-    feather = int_param(params, "shadowFeather", 9, 0, 50)
-
-    # 1. Chuyển RGB -> BGR cho OpenCV
-    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-
-    # 2. Bước 1: Máy tự động xác nhận có bóng không
-    auto_mask, grain_mask, dark_mask = detect_shadow_auto(
-        bgr,
-        blur_ksize=blur_ksize,
-        morph_ksize=morph_ksize,
-    )
-    auto_shadow_pct = float(auto_mask.mean() / 255.0 * 100.0)
-    grain_pct = float(grain_mask.mean() / 255.0 * 100.0)
-
-    # Mở rộng nhẹ mask để khử sạch viền bóng
-    kernel_dilate = np.ones((5, 5), np.uint8)
-    final_mask = cv2.dilate(auto_mask, kernel_dilate, iterations=1)
-    final_shadow_pct = float(final_mask.mean() / 255.0 * 100.0)
-
-    has_shadow = final_shadow_pct >= threshold_pct
-
-    # 3. Phân nhánh hành động: Có bóng -> Xóa bóng; Không có -> Đi tiếp
-    if has_shadow:
-        print(f"[UC Shadow] XAC NHAN CO BONG ({final_shadow_pct:.2f}% >= {threshold_pct}%). Bat dau xoa bong...")
-        removed_bgr = remove_shadow(
-            bgr,
-            final_mask,
-            blur_ksize=shadow_blur_ksize,
-            max_gain=max_gain,
-            feather=feather,
-        )
-        processed_rgb = cv2.cvtColor(removed_bgr, cv2.COLOR_BGR2RGB)
-        applied = True
-        reason = f"shadow_detected_and_removed_{final_shadow_pct:.2f}pct"
-    else:
-        print(f"[UC Shadow] XAC NHAN KHONG CO BONG ({final_shadow_pct:.2f}% < {threshold_pct}%). Bo qua xoa bong, chuyen qua phan sau.")
-        processed_rgb = rgb
-        final_mask = np.zeros(rgb.shape[:2], dtype=np.uint8)
-        applied = False
-        reason = f"no_shadow_detected_{final_shadow_pct:.2f}pct"
-
-    stats = {
-        "enabled": True,
-        "shadow_detected": bool(has_shadow),
-        "applied": bool(applied),
-        "shadow_pct": round(final_shadow_pct, 2),
-        "auto_shadow_pct": round(auto_shadow_pct, 2),
-        "grain_pct": round(grain_pct, 2),
-        "threshold_pct": threshold_pct,
-        "reason": reason,
-    }
-
-    return processed_rgb, final_mask, stats
 
 
 # ─────────────────────────────────────────────────────────────────────────────

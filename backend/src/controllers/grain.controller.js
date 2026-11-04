@@ -405,8 +405,6 @@ const compactAnalyzeResponse = (result) => ({
   overlay_png_base64: result.overlay_png_base64 || '',
   sam_mask_png_base64: result.sam_mask_png_base64 || '',
   preprocessed_png_base64: result.preprocessed_png_base64 || '',
-  shadow_removed_png_base64: result.shadow_removed_png_base64 || '',
-  shadow_removal: result.shadow_removal || { enabled: false, shadow_detected: false, applied: false },
   mask_png_base64: result.mask_png_base64 || '',
   labels_png_base64: result.labels_png_base64 || '',
   label_map_png_base64: result.label_map_png_base64 || '',

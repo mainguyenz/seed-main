@@ -89,8 +89,7 @@
     "denoiseStrength":        { "type": "number",  "default": 0.1,    "min": 0,    "max": 1 },
     "denoiseDiameter":        { "type": "number",  "default": 5,      "min": 3,    "max": 15 },
 
-    "enableShadowRemoval":    { "type": "boolean", "default": true },
-    "shadowThresholdPct":     { "type": "number",  "default": 0.5,    "min": 0.01, "max": 50.0 },
+    "enableShadowRemoval":    { "type": "boolean", "default": false },
     "shadowBlurKsize":        { "type": "number",  "default": 5,      "min": 3,    "max": 31 },
     "shadowMorphKsize":       { "type": "number",  "default": 5,      "min": 3,    "max": 31 },
     "shadowRemovalBlurKsize": { "type": "number",  "default": 61,     "min": 3,    "max": 201 },
