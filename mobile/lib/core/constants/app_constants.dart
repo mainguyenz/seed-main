@@ -1,14 +1,17 @@
 const String configuredBaseUrl = String.fromEnvironment('BASE_URL');
 
-const String defaultBaseUrl =
+const String renderCloudBaseUrl = 'https://seed-main-me.onrender.com/api';
+const String azureCloudBaseUrl =
     'https://seed-vanb2207577-aybrd9fwhnf3hqeq.eastasia-01.azurewebsites.net/api';
+
+const String defaultBaseUrl = renderCloudBaseUrl;
 const String baseUrl =
     configuredBaseUrl == '' ? defaultBaseUrl : configuredBaseUrl;
 
 const String appVersionName = '1.0.16';
 const int appBuildNumber = 17;
 
-const Duration connectTimeout = Duration(seconds: 15);
+const Duration connectTimeout = Duration(seconds: 25);
 const Duration receiveTimeout = Duration(seconds: 180);
 
 const String accessTokenKey = 'access_token';

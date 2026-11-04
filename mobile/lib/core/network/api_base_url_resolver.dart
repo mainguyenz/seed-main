@@ -11,11 +11,13 @@ class ApiBaseUrlResolver {
   }) : _storage = storage;
 
   final FlutterSecureStorage _storage;
+
+  // Realistic probe timeout for mobile networks (4G/WiFi SSL handshake ~1-3s)
   final Dio _probeClient = Dio(
     BaseOptions(
-      connectTimeout: const Duration(milliseconds: 700),
-      receiveTimeout: const Duration(milliseconds: 700),
-      sendTimeout: const Duration(milliseconds: 700),
+      connectTimeout: const Duration(milliseconds: 3500),
+      receiveTimeout: const Duration(milliseconds: 3500),
+      sendTimeout: const Duration(milliseconds: 3500),
     ),
   );
 
@@ -30,23 +32,41 @@ class ApiBaseUrlResolver {
   }
 
   Future<String> _resolve() async {
+    // 1. Manually configured URL (via --dart-define=BASE_URL=...)
     if (configuredBaseUrl.isNotEmpty && await _isHealthy(configuredBaseUrl)) {
       return _setResolved(configuredBaseUrl);
     }
 
+    // 2. Previously cached working URL
     final cached = await _storage.read(key: resolvedBaseUrlKey);
-    if (cached != null && await _isHealthy(cached)) {
+    if (cached != null && cached.isNotEmpty && await _isHealthy(cached)) {
       return _setResolved(cached);
     }
 
-    if (await _isHealthy(defaultBaseUrl)) {
-      return _setResolved(defaultBaseUrl);
+    // 3. Primary production cloud backend (Render)
+    if (await _isHealthy(renderCloudBaseUrl)) {
+      return _setResolved(renderCloudBaseUrl);
     }
 
-    final discovered = await _discoverOnLocalNetwork();
-    if (discovered != null) return _setResolved(discovered);
+    // 4. Secondary fallback cloud backend (Azure)
+    if (await _isHealthy(azureCloudBaseUrl)) {
+      return _setResolved(azureCloudBaseUrl);
+    }
 
-    return _setResolved(baseUrl, cache: false);
+    // 5. Common development targets (Android emulator, Genymotion, localhost)
+    final devTarget = await _probeCommonDevHosts();
+    if (devTarget != null) {
+      return _setResolved(devTarget);
+    }
+
+    // 6. Local network discovery (e.g. debugging physical device on office WiFi)
+    final discovered = await _discoverOnLocalNetwork();
+    if (discovered != null) {
+      return _setResolved(discovered);
+    }
+
+    // 7. Ultimate fallback: defaultBaseUrl
+    return _setResolved(baseUrl, cache: true);
   }
 
   Future<String> _setResolved(String value, {bool cache = true}) async {
@@ -57,22 +77,44 @@ class ApiBaseUrlResolver {
     return value;
   }
 
-  Future<String?> _discoverOnLocalNetwork() async {
-    final hosts = await _localSubnetHosts();
-    const batchSize = 32;
+  Future<String?> _probeCommonDevHosts() async {
+    // 10.0.2.2 is the Android emulator's loopback interface to the host machine
+    // 10.0.3.2 is used by Genymotion
+    final candidates = <String>[
+      'http://10.0.2.2:3000/api',
+      'http://10.0.3.2:3000/api',
+      'http://127.0.0.1:3000/api',
+      'http://localhost:3000/api',
+    ];
 
-    for (var i = 0; i < hosts.length; i += batchSize) {
-      final batch = hosts.skip(i).take(batchSize);
-      final probes = await Future.wait(
-        batch.map((host) async {
-          final candidate = 'http://$host:3000/api';
-          return await _isHealthy(candidate) ? candidate : null;
-        }),
-      );
-
-      for (final candidate in probes) {
-        if (candidate != null) return candidate;
+    for (final candidate in candidates) {
+      if (await _isHealthy(candidate)) {
+        return candidate;
       }
+    }
+    return null;
+  }
+
+  Future<String?> _discoverOnLocalNetwork() async {
+    try {
+      final hosts = await _localSubnetHosts();
+      const batchSize = 32;
+
+      for (var i = 0; i < hosts.length; i += batchSize) {
+        final batch = hosts.skip(i).take(batchSize);
+        final probes = await Future.wait(
+          batch.map((host) async {
+            final candidate = 'http://$host:3000/api';
+            return await _isHealthy(candidate) ? candidate : null;
+          }),
+        );
+
+        for (final candidate in probes) {
+          if (candidate != null) return candidate;
+        }
+      }
+    } catch (_) {
+      // Ignore network interface enumeration failures on restrictive devices
     }
 
     return null;
@@ -106,8 +148,21 @@ class ApiBaseUrlResolver {
   Future<bool> _isHealthy(String apiBaseUrl) async {
     try {
       final uri = Uri.parse(apiBaseUrl);
-      final healthUri = uri.replace(path: '/health', query: '');
-      final response = await _probeClient.getUri(healthUri);
+
+      // Probe root /health
+      final rootHealthUri = uri.replace(path: '/health', query: '');
+      try {
+        final response = await _probeClient.getUri(rootHealthUri);
+        final data = response.data;
+        if (response.statusCode == 200 && data is Map && data['success'] == true) {
+          return true;
+        }
+      } catch (_) {}
+
+      // Probe subpath /api/health or /grain/health if root /health didn't respond
+      final subPath = '${uri.path}/grain/health'.replaceAll('//', '/');
+      final subHealthUri = uri.replace(path: subPath, query: '');
+      final response = await _probeClient.getUri(subHealthUri);
       final data = response.data;
       return response.statusCode == 200 &&
           data is Map &&
