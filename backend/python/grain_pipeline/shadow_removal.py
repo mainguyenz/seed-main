@@ -26,12 +26,6 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
 import cv2
 import numpy as np
 
-def _log(msg: str) -> None:
-    try:
-        sys.stderr.write(f"{msg}\n")
-    except Exception:
-        pass
-
 from .config import bool_param, float_param, int_param
 
 
@@ -338,17 +332,17 @@ class MaskEditor:
             while True:
                 # Check if window was closed by the user
                 if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
-                    _log("-> Cua so da duoc dong. Xac nhan mat na hien tai.")
+                    print("-> Cua so da duoc dong. Xac nhan mat na hien tai.")
                     break
 
                 cv2.imshow(window_name, self.render())
                 key = cv2.waitKey(16) & 0xFF
 
                 if key in (13, 32):  # Enter or Space
-                    _log("-> Da xac nhan mat na chinh sua bang tay.")
+                    print("-> Da xac nhan mat na chinh sua bang tay.")
                     break
                 elif key == 27:  # Esc
-                    _log("-> Da thoat che do chinh tay (giu nguyen mat na hien tai).")
+                    print("-> Da thoat che do chinh tay (giu nguyen mat na hien tai).")
                     break
                 elif key == ord('['):
                     self.brush = max(1, self.brush - 2)
@@ -356,10 +350,10 @@ class MaskEditor:
                     self.brush = min(500, self.brush + 2)
                 elif key in (ord('r'), ord('R')):
                     self.mask[:] = self.init_mask_backup
-                    _log("-> Da khoi phuc lai mat na tu dong ban dau.")
+                    print("-> Da khoi phuc lai mat na tu dong ban dau.")
                 elif key in (ord('c'), ord('C')):
                     self.mask.fill(0)
-                    _log("-> Da xoa sach toan bo mat na bong.")
+                    print("-> Da xoa sach toan bo mat na bong.")
         finally:
             cv2.destroyAllWindows()
 
@@ -492,7 +486,7 @@ def check_and_remove_shadow_uc(
 
     # 3. Phân nhánh hành động: Có bóng -> Xóa bóng; Không có -> Đi tiếp
     if has_shadow:
-        _log(f"[UC Shadow] XAC NHAN CO BONG ({final_shadow_pct:.2f}% >= {threshold_pct}%). Bat dau xoa bong...")
+        print(f"[UC Shadow] XAC NHAN CO BONG ({final_shadow_pct:.2f}% >= {threshold_pct}%). Bat dau xoa bong...")
         removed_bgr = remove_shadow(
             bgr,
             final_mask,
@@ -504,7 +498,7 @@ def check_and_remove_shadow_uc(
         applied = True
         reason = f"shadow_detected_and_removed_{final_shadow_pct:.2f}pct"
     else:
-        _log(f"[UC Shadow] XAC NHAN KHONG CO BONG ({final_shadow_pct:.2f}% < {threshold_pct}%). Bo qua xoa bong, chuyen qua phan sau.")
+        print(f"[UC Shadow] XAC NHAN KHONG CO BONG ({final_shadow_pct:.2f}% < {threshold_pct}%). Bo qua xoa bong, chuyen qua phan sau.")
         processed_rgb = rgb
         final_mask = np.zeros(rgb.shape[:2], dtype=np.uint8)
         applied = False
@@ -576,18 +570,24 @@ def detect_and_remove_shadow(
     )
     auto_shadow_pct = float(auto_mask.mean() / 255.0 * 100.0)
     grain_pct = float(grain_mask.mean() / 255.0 * 100.0)
-    _log(f"[Shadow Removal] May tu dong phat hien: Hat lua={grain_pct:.1f}% | Vung toi={dark_mask.mean() / 255.0 * 100.0:.1f}% | Bong={auto_shadow_pct:.1f}%")
+    print(f"[Shadow Removal] May tu dong phat hien: Hat lua={grain_pct:.1f}% | Vung toi={dark_mask.mean() / 255.0 * 100.0:.1f}% | Bong={auto_shadow_pct:.1f}%")
 
     # 3. Bước 2: Chỉnh sửa thủ công bằng tay (MaskEditor) nếu được kích hoạt
     manual_edited = False
     if interactive:
         if is_gui_available():
-            _log("[MaskEditor] Dang mo trinh chinh sua mat na bong bang tay...")
+            print("\n[MaskEditor] Dang mo trinh chinh sua mat na bong bang tay...")
+            print("  - Chuot trai: Ve them bong (mau tim)")
+            print("  - Chuot phai: Xoa vung bong bi nhan nham")
+            print("  - Con lan chuot / Ctrl+Lan: Pan / Zoom anh")
+            print("  - Phim [ va ]: Thay doi kich thuoc co")
+            print("  - Phim R: Reset ve mat na tu dong ban dau")
+            print("  - Nhan ENTER hoac SPACE tren cua so anh khi hoan tat de tiep tuc xu ly.")
             editor = MaskEditor(bgr, auto_mask)
             chosen_mask = editor.run("Chinh sua mat na bong (MaskEditor)")
             manual_edited = True
         else:
-            _log("[Shadow Removal] Khong tim thay giao dien GUI (headless), tu dong su dung ket qua may.")
+            print("[Shadow Removal] Khong tim thay giao dien GUI (headless), tu dong su dung ket qua may.")
             chosen_mask = auto_mask
     else:
         chosen_mask = auto_mask
@@ -608,11 +608,11 @@ def detect_and_remove_shadow(
         )
         removed_rgb = cv2.cvtColor(removed_bgr, cv2.COLOR_BGR2RGB)
         applied = True
-        _log(f"[Shadow Removal] Da khu bong thanh cong ({final_shadow_pct:.1f}% dien tich). Tra ve anh sach bong.")
+        print(f"[Shadow Removal] Da khu bong thanh cong ({final_shadow_pct:.1f}% dien tich). Tra ve anh sach bong.")
     else:
         removed_rgb = rgb.copy()
         applied = False
-        _log("[Shadow Removal] Vung bong < 0.05%, giu nguyen anh goc.")
+        print("[Shadow Removal] Vung bong < 0.05%, giu nguyen anh goc.")
 
     stats = {
         "enabled": True,
